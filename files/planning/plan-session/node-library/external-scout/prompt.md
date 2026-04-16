@@ -18,7 +18,7 @@ description = <3-5 word description of the task>
 
 ## Prepare Delegation Protocol
 
-1. Call `qdrant_qdrant-find` with `collection_name={{PLAN_NAME}}` using 3-5 varied queries to retrieve what is already known and what project constraints apply (language versions, existing dependencies, exclusions).
+1. Call `qdrant_qdrant-find` with `collection_name={{PLAN_NAME}}`, as needed, to retrieve what is already known and what project constraints apply (language versions, existing dependencies, exclusions).
 2. Draft a prompt for external-scout that includes: the research questions, what prior steps already established (so external-scout fills gaps, not duplicates), project constraints the research must account for, and reporting requirements (confidence tags, sources, contradictions).
 
 ## Delegation Gate

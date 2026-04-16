@@ -2,10 +2,8 @@ import type { PhaseType } from "../../types";
 
 export const VALID_PHASE_TYPES = new Set<string>([
   "web-search",
-  "deep-project-search-and-analysis",
-  "project-survey",
-  "work",
-  "project-setup",
+  "implement-code",
+  "author-documentation",
   "user-discussion",
   "user-decision-gate",
   "agentic-decision-gate",
@@ -49,17 +47,12 @@ export function validatePhaseOptions(
         );
       }
       break;
-    case "work":
+    case "implement-code":
       require("work-instructions", "string");
-      require("work-type", "string");
       require("verification-instructions", "string");
-      require("project-survey-topics", "string[]");
-      require("deep-search-questions", "string[]");
-      if (!["code", "docs"].includes(opts["work-type"] as string)) {
-        throw new Error(
-          `Invalid value for 'work-type': '${opts["work-type"]}'. Expected: code | docs.`,
-        );
-      }
+      break;
+    case "author-documentation":
+      require("goal", "string");
       break;
     case "user-discussion":
       require("topic", "string");

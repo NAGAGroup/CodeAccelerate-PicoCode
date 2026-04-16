@@ -2,7 +2,8 @@
 
 export type PhaseType =
   | "web-search"
-  | "work"
+  | "implement-code"
+  | "author-documentation"
   | "user-discussion"
   | "user-decision-gate"
   | "agentic-decision-gate"

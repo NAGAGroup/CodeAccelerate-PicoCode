@@ -1,35 +1,35 @@
 # Project Setup
 
-**Subagent:** tailwrench
+**Subagent:** junior-dev
 **Goal:** Execute the following setup operations: {{DESCRIPTION}}
 
 ## Hard Rules
 
-1. Write your prompt as instructions *to* tailwrench — treat it as a message to another agent.
-2. Call the `task` tool with `subagent_type=tailwrench`.
-3. Tailwrench can only run shell commands and edit config and build system files — never source code or documentation.
+1. Write your prompt as instructions *to* junior-dev — treat it as a message to another agent.
+2. Call the `task` tool with `subagent_type=junior-dev`.
 
 ## Preflight Checks
 
 ```
 [preflight]
-subagent_type = tailwrench
+subagent_type = junior-dev
 description = <3-5 word description of the task>
 ```
 
 ## Prepare Delegation Protocol
 
-1. Call `qdrant_qdrant-find` with `collection_name={{PLAN_NAME}}` using 3-5 varied queries to retrieve any environment constraints, known dependency versions, or prior failed attempts that affect how these steps should run.
-2. Draft a prompt for tailwrench that includes: the setup steps to execute, any relevant constraints from context retrieval, what tailwrench can and cannot touch, and what to report back per step.
+1. Call `qdrant_qdrant-find` with `collection_name={{PLAN_NAME}}`, as needed, to retrieve any environment constraints, known dependency versions, or prior failed attempts that affect how these steps should run.
+2. Draft a prompt for junior-dev that includes: the setup steps to execute, relevant constraints from context retrieval, and what to report back per step.
+3. Include web search instructions verbatim: "Use web search tools as you work, e.g. API docs, build system integration, best practices, headers, user guides, etc. Never assume prior knowledge or provided context is enough. Verify everything."
 
 ## Delegation Gate
 
 ```toml
 [delegation-gate]
 prompt_addresses_subagent_directly = <true/false>
+prompt_includes_web_search_instructions = <true/false>
 prompt_includes_retrieved_context = <true/false>
 prompt_specifies_return_format = <true/false>
-prompt_restricts_to_config_and_build_files = <true/false — prompt does not ask tailwrench to edit source code or documentation>
 gate_passed = <true/false>
 ```
 

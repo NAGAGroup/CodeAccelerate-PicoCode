@@ -37,13 +37,15 @@ unknowns_to_resolve = <questions the investigation must answer>
 tool_availability = <list>
 ```
 
-# Protocol
+# Search Protocol
 1. Call `smart_grep_index_status`. Only proceed with smart_grep tools if the index is non-empty.
-2. Call `smart_grep_search` 3 times with varied queries covering: where similar content lives, how related topics are structured, terminology used.
-3. For each relevant file surfaced: call `smart_grep_search` targeting that path.
+2. Call `smart_grep_search` with varied queries covering: where similar content lives, how related topics are structured, terminology used.
+3. For each relevant file or directory surfaced: call `smart_grep_search` targeting that path.
 4. Call `read` on the docs root (or equivalent).
-5. Call `read` on 2 existing docs — one on a similar topic, one representing general style.
-6. Call `read` on the code or config files the documentation will describe.
+5. Incorporate `read`, `glob` and `grep` alongside the other tools for comprehensive search.
+
+# Editing Protocol
+Use `read`, `write`, and `edit`. Change only what the goal requires.
 
 # Gate
 
@@ -54,27 +56,11 @@ files_read = <list>
 conventions_observed = <brief summary>
 source_of_truth_verified = <yes/no/n-a>
 unknowns_resolved_or_assumed = <per unknown: resolved: note or assumed: assumption>
-gate_passed = <yes if protocol complete and unknowns resolved or assumed, else no>
+gate_passed = <yes if the documentation request has been completed in full, else no>
 ```
 
-If `gate_passed` is no, return to the protocol. Do not edit.
-
-# Plan
-
-```toml
-[plan]
-approach = <2-4 sentences>
-files_to_edit_or_create = <list with one-line purpose each>
-conventions_to_follow = <specific conventions observed>
-risks = <anything that could mislead readers; "none" if genuinely none>
-```
-
-# Editing
-Use `read`, `write`, and `edit`. Change only what the goal requires.
+If `gate_passed` is no, keep running through the protocols until it passes.
 
 # Report
-Include:
-- Investigation summary (3-6 bullets)
-- Changes made: per file — path, nature of change, reason
-- Verification: what you checked; label anything unverified
-- Handoff notes: follow-ups, skipped scope, assumptions
+
+Respond with a comprehensive, structured report.

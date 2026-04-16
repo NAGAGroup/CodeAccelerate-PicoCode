@@ -19,7 +19,7 @@ description = <3-5 word description of the task>
 
 ## Prepare Delegation Protocol
 
-1. Call `qdrant_qdrant-find` with `collection_name={{PLAN_NAME}}` using 3-5 varied queries to retrieve any prior findings or planning context that should inform what context-scout focuses on.
+1. Call `qdrant_qdrant-find` with `collection_name={{PLAN_NAME}}`, as needed, to retrieve any prior findings or planning context that should inform what context-scout focuses on.
 2. Draft a prompt for context-scout that includes: the survey goals from preflight, any retrieved context that scopes or prioritizes the survey, and clear reporting requirements.
 
 ## Delegation Gate

@@ -21,7 +21,7 @@ description = <3-5 word description of the task>
 
 ## Prepare Delegation Protocol
 
-1. Call `qdrant_qdrant-find` with `collection_name={{PLAN_NAME}}` using 5-7 varied queries to retrieve the triage root cause, prior fix attempts, verified code facts, and documentation conventions.
+1. Call `qdrant_qdrant-find` with `collection_name={{PLAN_NAME}}`, as needed, to retrieve the triage root cause, prior fix attempts, verified code facts, and documentation conventions.
 2. Draft a prompt for documentation-expert that includes: the fix goal, the root cause to address, verified technical facts as source-of-truth, what prior attempts already tried, and what to report back.
 3. Include instructions to perform web search as they work, if specified. They *can* perform their own web search, instructions to perform web search are valid. Do not exclude web search instructions.
 

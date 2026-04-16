@@ -1,8 +1,4 @@
 import type { PluginDeps } from "../deps";
-import { handlePlanSessionBefore } from "./tool-before-hooks/plan-session";
-import { handleActivatePlanBefore } from "./tool-before-hooks/activate-plan";
-import { handleNextStepBefore } from "./tool-before-hooks/next-step";
-import { handlePresentPlanDiagramBefore } from "./tool-before-hooks/present-plan-diagram";
 import { handleEnforcementBefore } from "./tool-before-hooks/enforcement";
 
 type BeforeHookFn = (input: any, output: any, deps: PluginDeps) => Promise<boolean>;
@@ -11,16 +7,11 @@ type BeforeHookFn = (input: any, output: any, deps: PluginDeps) => Promise<boole
  * Registered before-hook handlers, executed in order.
  * Each handler returns true if it handled the input (short-circuits remaining handlers).
  *
- * Enforcement runs FIRST so that plan_session/activate_plan cannot bypass DAG blocking
- * when called mid-session. When no session is active, enforcement is a no-op (readState
- * returns null) and the tool-specific handlers run normally.
+ * Enforcement is the sole before-hook — it gates all tool calls when a session is active.
+ * Tool-specific setup and validation logic lives in each tool's execute().
  */
 const pipeline: BeforeHookFn[] = [
-  handleEnforcementBefore, // must be first — gates all tool calls when a session is active
-  handlePlanSessionBefore,
-  handleActivatePlanBefore,
-  handlePresentPlanDiagramBefore,
-  handleNextStepBefore,
+  handleEnforcementBefore,
 ];
 
 export async function beforeHook(

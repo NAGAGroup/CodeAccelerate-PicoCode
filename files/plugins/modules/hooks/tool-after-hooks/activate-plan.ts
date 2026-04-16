@@ -23,22 +23,10 @@ export async function handleActivatePlanAfter(
     inject: entryNode.inject,
   });
 
-  const deferredPromptInjection = async (
-    _input: any = input,
-    _deferredDeps: PluginDeps = deps,
-    _promptText: string = promptText,
-  ) => {
-    // 2000ms sleep
-    await new Promise((resolve) => {
-      setTimeout(resolve, 2000);
-    });
-
-    _deferredDeps.client.session.prompt({
-      path: { id: _input.sessionID },
-      body: { parts: [{ type: "text", text: _promptText }] },
-    });
-  };
-  deferredPromptInjection();
+  deps.client.session.prompt({
+    path: { id: input.sessionID },
+    body: { parts: [{ type: "text", text: promptText }] },
+  });
 
   return true;
 }

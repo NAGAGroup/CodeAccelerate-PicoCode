@@ -4,6 +4,7 @@ import { dagStatePath, readState, writeState, now } from "../../state-io";
 import { readPrompt } from "../../path-utils";
 import { readDagV3 } from "../../dag-io";
 import { detectDivergence, suggestRecoveryActions } from "../../divergence-detection";
+import { allRemainingOptional } from "../dag_engine/enforcement-utils";
 
 export function createNavigationTools(deps: PluginDeps) {
   const { resolveWorktree } = deps;
@@ -25,11 +26,46 @@ export function createNavigationTools(deps: PluginDeps) {
         const state = readState(statePath);
 
         if (!state) return "No active DAG session.";
+        if (state.status === "complete") return `DAG session "${state.dag_id}" is already complete.`;
+
+        const currentNode = state.node_map[state.current_node];
+
+        // Enforcement check
+        const canProceed =
+          state.status === "waiting_step" ||
+          (currentNode ? allRemainingOptional(currentNode.enforcement, state.todo_index) : true);
+
+        if (!canProceed) {
+          const remaining = currentNode ? currentNode.enforcement.length - state.todo_index : 0;
+          const nextExpected = currentNode
+            ? (currentNode.enforcement[state.todo_index] ?? "none")
+            : "unknown";
+          throw new Error(
+            `Cannot call next_step — node "${state.current_node}" still has ${remaining} enforcement item(s) pending. ` +
+              `Next expected tool: "${nextExpected}". Call "${nextExpected}" to continue, ` +
+              `then call next_step when all enforcement items are complete.`,
+          );
+        }
 
         const node = state.node_map[state.current_node];
         if (!node) return `Current node "${state.current_node}" not found in DAG.`;
 
         const children = node.children ?? [];
+
+        // Branch validation
+        if (children.length > 1) {
+          if (!next) {
+            throw new Error(
+              `[BRANCH REQUIRED] Node "${state.current_node}" has multiple children.\n` +
+                `Call next_step with the next parameter. Valid options: [${children.join(", ")}].`,
+            );
+          }
+          if (!children.includes(next)) {
+            throw new Error(
+              `Invalid branch "${next}". Valid options: [${children.join(", ")}]`,
+            );
+          }
+        }
 
         // Terminal — end session
         if (children.length === 0) {

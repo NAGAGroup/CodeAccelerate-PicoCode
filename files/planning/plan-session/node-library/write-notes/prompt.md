@@ -17,7 +17,7 @@ documentation_target = <what this step must capture, in your own words based on 
 
 ## Retrieve and Store
 
-1. Call `qdrant_qdrant-find` with `collection_name={{PLAN_NAME}}` using 3-5 varied queries to retrieve findings from prior steps relevant to what {{DESCRIPTION}} asks you to document.
+1. Call `qdrant_qdrant-find` with `collection_name={{PLAN_NAME}}`, as needed, to retrieve findings from prior steps relevant to what {{DESCRIPTION}} asks you to document.
 2. For each distinct finding, decision, or outcome: call `qdrant_qdrant-store` with `collection_name={{PLAN_NAME}}`. Write each note as self-contained prose.
 
 ## Gate

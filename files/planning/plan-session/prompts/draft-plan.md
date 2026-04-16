@@ -38,8 +38,8 @@ If `collaboration_signal = "unclear"`, use the `question` tool now to resolve it
 Identify these things together, because they shape each other:
 
 - **Decisions/Discussion** — things that must be decided during execution. For each decision, note who decides (agent or user) and whether the decision changes *what* gets implemented downstream.
-- **Work items** — distinct implementation tasks, don't cram a ton of work into a single phase. Keep each tightly scoped. Every work phase touching external dependencies must have `web-search-questions` and the instructions fields should explicitly state that external dependencies are involved and that subagents should perform their own web searches as they work to ensure the work being done is correct.
-- **Verification** — how will work be verified? This includes success criteria and any specific visual checks, verification commands, checking against external resources via web search, etc.
+- **Work items** — distinct implementation tasks, don't cram a ton of work into a single phase. Keep each tightly scoped. Every `implement-code` phase touching external dependencies must have `web-search-questions` and the instructions fields should explicitly state that external dependencies are involved and that junior-dev should perform its own web searches as it works to ensure correctness.
+- **Verification** — how will the work be verified? Junior-dev runs verification itself after implementing. Specify success criteria and any concrete checks: build commands, test commands, visual checks, API responses, etc. Be explicit — junior-dev uses exactly what you write here.
 
 A decision that changes what gets implemented → a gate that branches into distinct pathways.
 A decision that only affects details of a work item → no branching; handle with `write-notes` or `user-discussion`.
@@ -75,9 +75,9 @@ Present the draft.
 single_entry_point = <true/false — exactly one phase has no phase pointing to it via next>
 all_phases_have_next_field = <true/false>
 only_gates_have_multi_next = <true/false>
-every_work_phase_with_external_deps_has_web_search_questions = <true/false>
-every_work_instruction_includes_explicit_web_search_as_you_work_verbiage = <true/false, e.g. "Subagents must be told to perform web search as they work since external dependencies are involved.">
-every_work_phase_has_internal_research_and_setup_fields_populated = <true/false>
+every_implement_code_phase_with_external_deps_has_web_search_questions = <true/false>
+every_implement_code_phase_instructions_include_explicit_web_search_verbiage = <true/false — junior-dev must be told to search as it works when external deps are involved>
+every_implement_code_phase_has_verification_instructions = <true/false — verification-instructions field is populated with concrete commands and criteria>
 every_branching_decision_from_part_1_appears_as_a_gate = <true/false>
 every_early_exit_from_part_2_appears_as_a_leaf = <true/false>
 every_collaboration_phase_from_part_1_appears_in_the_plan = <true/false>

@@ -1,8 +1,11 @@
 import { tool } from "@opencode-ai/plugin";
-import * as fs from "fs";
-import * as path from "path";
 import type { PluginDeps } from "../deps";
-import { dagStatePath, readState, writeState, now } from "../../state-io";
+import { dagStatePath, writeState, now } from "../../state-io";
+import { copyPlanningDag } from "../../dag-lifecycle";
+import { flattenTreeV3 } from "../../dag-tree";
+import { recompilePlan } from "../dag_engine/compiler";
+import { ensureGrepai } from "../hooks/tool-before-hooks/grepai-lifecycle";
+import type { DagSessionState } from "../../types";
 
 export function createSessionTools(deps: PluginDeps) {
   const { resolveWorktree } = deps;
@@ -14,9 +17,51 @@ export function createSessionTools(deps: PluginDeps) {
       args: {},
       async execute(_args, context) {
         const worktree = resolveWorktree(context);
+        ensureGrepai(worktree);
+
+        const { localPlanPath, metadata, nodes } = copyPlanningDag(
+          "plan-session",
+          context.sessionID,
+          worktree,
+        );
+
+        const plan_name = `plan-session-${context.sessionID}`;
+        const promptsPrefix = `.opencode/session-plans/${plan_name}/prompts/`;
+        for (const node of nodes) {
+          if (!node.prompt.includes("/"))
+            node.prompt = `${promptsPrefix}${node.prompt}`;
+        }
+
+        const nodeMap = flattenTreeV3(metadata, nodes);
+        const entryNode = nodeMap[metadata.entry_node_id];
+        if (!entryNode)
+          throw new Error(
+            `Entry node "${metadata.entry_node_id}" not found in DAG`,
+          );
+
         const statePath = dagStatePath(worktree, context.sessionID);
-        const state = readState(statePath);
-        if (!state) return "Failed to activate plan session.";
+        const state: DagSessionState = {
+          dag_id: metadata.id,
+          plan_path: localPlanPath,
+          status: "running",
+          current_node: metadata.entry_node_id,
+          todo_index: 0,
+          started_at: now(),
+          updated_at: now(),
+          decisions: [],
+          node_map: nodeMap,
+          planning_session_id: plan_name,
+        };
+        writeState(statePath, state);
+
+        if (entryNode.enforcement.length === 0) {
+          state.status =
+            entryNode.children && entryNode.children.length > 0
+              ? "waiting_step"
+              : "complete";
+          writeState(statePath, state);
+        }
+
         return `Planning session has begun. Wait for your next step.`;
       },
     }),
@@ -28,9 +73,42 @@ export function createSessionTools(deps: PluginDeps) {
       },
       async execute({ plan_name }, context) {
         const worktree = resolveWorktree(context);
+        ensureGrepai(worktree);
+
+        const { compiledPlanPath, metadata, nodeMap } = recompilePlan(
+          plan_name,
+          worktree,
+        );
+
+        const entryNode = nodeMap[metadata.entry_node_id];
+        if (!entryNode)
+          throw new Error(
+            `Entry node "${metadata.entry_node_id}" not found in DAG "${plan_name}"`,
+          );
+
         const statePath = dagStatePath(worktree, context.sessionID);
-        const state = readState(statePath);
-        if (!state) return `Failed to activate plan "${plan_name}".`;
+        const state: DagSessionState = {
+          dag_id: metadata.id,
+          plan_path: compiledPlanPath,
+          status: "running",
+          current_node: metadata.entry_node_id,
+          todo_index: 0,
+          started_at: now(),
+          updated_at: now(),
+          decisions: [],
+          node_map: nodeMap,
+          plan_name: plan_name,
+        };
+        writeState(statePath, state);
+
+        if (entryNode.enforcement.length === 0) {
+          state.status =
+            entryNode.children && entryNode.children.length > 0
+              ? "waiting_step"
+              : "complete";
+          writeState(statePath, state);
+        }
+
         return `Plan execution has begun. Wait for your next step.`;
       },
     }),

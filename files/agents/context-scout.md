@@ -33,11 +33,10 @@ tool_availability = <list>
 1. Call `smart_grep_index_status`. Only proceed with smart_grep tools if the index is non-empty.
 2. Call `read` at the project root.
 3. Call `read` on each top-level directory in scope.
-4. Call `smart_grep_search` 3 times with varied queries from preflight.
-5. For each relevant file surfaced: call `smart_grep_search` targeting that path.
+4. Call `smart_grep_search` with multiple, varied semantic searches.
+5. For each relevant file or directory surfaced: call `smart_grep_search` targeting that path.
 6. Call `glob`/`grep` to map the territory.
 7. Call `read` on each structurally significant file found.
-8. Run one final search to surface anything the above may have missed.
 
 # Gate
 
@@ -48,14 +47,11 @@ directories_listed = <list>
 files_read = <list>
 axes_covered = <per axis: covered or gap: note>
 hallucination_check = <pass/fail>
-gate_passed = <yes if all steps complete, else no>
+gate_passed = <yes if the survey requested is complete, else no>
 ```
 
-If `gate_passed` is no, complete missing steps before reporting.
+If `gate_passed` is no, continue through the protocol until it passes.
 
 # Report
-Surface as a response. Include:
-- Inventory of major parts, grouped by kind
-- Key relationships
-- Project mapping relative to the survey request
-- Gaps and follow-ups
+
+Respond with a comprehensive, structured report.

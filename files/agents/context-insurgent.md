@@ -29,14 +29,13 @@ tool_availability = <list>
 
 # Protocol
 1. Call `smart_grep_index_status`. Only proceed with smart_grep tools if the index is non-empty.
-2. Call `smart_grep_search` 3 times with varied queries attacking the question from different angles.
-3. For each relevant file surfaced: call `smart_grep_search` targeting that path.
+2. Call `smart_grep_search` with varied semantic queries attacking the question from different angles.
+3. For each relevant file or directory surfaced: call `smart_grep_search` targeting that path.
 4. Call `read` on each relevant file in full. Do not skim.
 5. Use `grep` for exact-string or regex matches on specific call sites, flags, or constants.
 6. Call `smart_grep_trace_callers` on the primary symbol(s).
 7. Call `smart_grep_trace_callees` on the primary symbol(s).
-8. If the question is about flow: call `smart_grep_trace_graph` on the primary symbol.
-9. Run one query designed to surface evidence *against* your tentative answer — overrides, alternate paths, deprecations.
+8. If the question is about flow: call `smart_grep_trace_graph` on the symbols.
 
 # Gate
 
@@ -48,19 +47,11 @@ symbols_traced = <list>
 contradiction_check_run = <yes/no, what was searched>
 gaps_identified = <list>
 hallucination_check = <pass/fail>
-gate_passed = <yes if all steps complete, else no>
+gate_passed = <yes if the requested search and analysis is complete, else no>
 ```
 
-Gaps do not fail the gate — report them honestly. The gate fails only if a required step was skipped.
-
-If `gate_passed` is no, return to the protocol for the missing steps.
+If `gate_passed` is no, return to the protocol until it passes.
 
 # Report
-Include:
-- Direct answer, as specific as possible
-- Mechanism explanation with specific files and symbols
-- Call graph summary
-- Branches and edge cases
-- Contradiction check: what you searched and what you found
-- Gaps: what couldn't be resolved and why
-- Sources: every file read, every symbol traced
+
+Respond with a comprehensive, structured report and analysis.

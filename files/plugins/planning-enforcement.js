@@ -65781,7 +65781,7 @@ var require_elk_bundled = __commonJS((exports, module) => {
           };
           var HG = zeb(xte, "Iterators/ConcatenatedIterator", 34);
           mdb(23, 1, { 3: 1, 35: 1, 23: 1 });
-          _.Dd = function fs10(a) {
+          _.Dd = function fs9(a) {
             return bs(this, JD(a, 23));
           };
           _.Fb = function hs(a) {
@@ -104187,82 +104187,17 @@ function now() {
   return new Date().toISOString();
 }
 
-// modules/tools/session-tools.ts
-function createSessionTools(deps) {
-  const { resolveWorktree } = deps;
-  return {
-    plan_session: tool({
-      description: "Start a /plan-session planning session. Copies the global planning DAG locally and activates it.",
-      args: {},
-      async execute(_args, context) {
-        const worktree = resolveWorktree(context);
-        const statePath = dagStatePath(worktree, context.sessionID);
-        const state = readState(statePath);
-        if (!state)
-          return "Failed to activate plan session.";
-        return `Planning session has begun. Wait for your next step.`;
-      }
-    }),
-    activate_plan: tool({
-      description: "Activate a project DAG produced by a planning session.",
-      args: {
-        plan_name: tool.schema.string().describe("The plan name.")
-      },
-      async execute({ plan_name }, context) {
-        const worktree = resolveWorktree(context);
-        const statePath = dagStatePath(worktree, context.sessionID);
-        const state = readState(statePath);
-        if (!state)
-          return `Failed to activate plan "${plan_name}".`;
-        return `Plan execution has begun. Wait for your next step.`;
-      }
-    })
-  };
-}
-
-// path-utils.ts
-import * as fs3 from "fs";
-import * as path3 from "path";
-function expandPath(p) {
-  if (p.startsWith("~/")) {
-    const home = process.env.HOME || process.env.USERPROFILE || "";
-    return path3.join(home, p.slice(2));
-  }
-  return p;
-}
-function readPrompt(promptPath, worktree, sessionPath, vars) {
-  const expanded = expandPath(promptPath);
-  let content;
-  if (path3.isAbsolute(expanded)) {
-    content = fs3.readFileSync(expanded, "utf-8");
-  } else {
-    content = fs3.readFileSync(path3.join(worktree, expanded), "utf-8");
-  }
-  if (sessionPath) {
-    content = content.replaceAll("{{SESSION_PATH}}", sessionPath);
-    content = content.replaceAll("{{SESSION_NAME}}", path3.basename(sessionPath));
-  }
-  if (vars?.plan_name) {
-    content = content.replaceAll("{{PLAN_NAME}}", vars.plan_name);
-  }
-  if (vars?.planning_session_id) {
-    content = content.replaceAll("{{PLANNING_SESSION_ID}}", vars.planning_session_id);
-  }
-  if (vars?.inject) {
-    for (const [key, value] of Object.entries(vars.inject)) {
-      content = content.replaceAll(`{{${key}}}`, value);
-    }
-  }
-  return content;
-}
+// dag-lifecycle.ts
+import * as fs4 from "fs";
+import * as path4 from "path";
 
 // dag-io.ts
-import * as fs4 from "fs";
+import * as fs3 from "fs";
 function readDagV3(planPath) {
-  if (!fs4.existsSync(planPath)) {
+  if (!fs3.existsSync(planPath)) {
     throw new Error(`plan.jsonl not found at ${planPath}`);
   }
-  const content = fs4.readFileSync(planPath, "utf-8");
+  const content = fs3.readFileSync(planPath, "utf-8");
   const lines = content.split(`
 `).filter((line) => line.trim());
   if (lines.length === 0) {
@@ -104287,8 +104222,750 @@ function writeDagV3(planPath, metadata, nodes) {
     JSON.stringify(metadata),
     ...nodes.map((node) => JSON.stringify(node))
   ];
-  fs4.writeFileSync(planPath, lines.join(`
+  fs3.writeFileSync(planPath, lines.join(`
 `), "utf-8");
+}
+
+// constants.ts
+import * as path3 from "path";
+var CONFIG_ROOT = path3.dirname(import.meta.dirname);
+var exemptTools = [
+  "question",
+  "qdrant_qdrant-store",
+  "qdrant_qdrant-find",
+  "recover_context",
+  "next_step",
+  "exit_plan",
+  "skill"
+];
+function isExempt(toolName) {
+  return exemptTools.includes(toolName);
+}
+
+// dag-lifecycle.ts
+function copyPlanningDag(planType, sessionId, worktree, configRoot = CONFIG_ROOT) {
+  const srcDir = path4.join(configRoot, "planning", planType);
+  const destDirName = `${planType}-${sessionId}`;
+  const destDir = path4.join(worktree, ".opencode", "session-plans", destDirName);
+  const srcPromptsDir = path4.join(srcDir, "prompts");
+  const destPromptsDir = path4.join(destDir, "prompts");
+  fs4.mkdirSync(destPromptsDir, { recursive: true });
+  const sessionPath = `.opencode/session-plans/${destDirName}`;
+  function copyPromptFile(src, dest) {
+    const content = fs4.readFileSync(src, "utf-8");
+    fs4.writeFileSync(dest, content.replaceAll("{{SESSION_PATH}}", sessionPath), "utf-8");
+  }
+  if (fs4.existsSync(srcPromptsDir)) {
+    for (const file2 of fs4.readdirSync(srcPromptsDir)) {
+      copyPromptFile(path4.join(srcPromptsDir, file2), path4.join(destPromptsDir, file2));
+    }
+  }
+  const refDir = path4.join(configRoot, "planning", "reference");
+  if (fs4.existsSync(refDir)) {
+    const destRefDir = path4.join(destDir, "reference");
+    fs4.mkdirSync(destRefDir, { recursive: true });
+    for (const file2 of fs4.readdirSync(refDir)) {
+      copyPromptFile(path4.join(refDir, file2), path4.join(destRefDir, file2));
+    }
+  }
+  const srcPlanPath = path4.join(srcDir, "plan.jsonl");
+  const localPlanPath = path4.join(destDir, "plan.jsonl");
+  const { metadata, nodes } = readDagV3(srcPlanPath);
+  writeDagV3(localPlanPath, metadata, nodes);
+  return { localPlanPath, metadata, nodes };
+}
+
+// dag-tree.ts
+function flattenTreeV3(metadata, nodes) {
+  const map2 = {};
+  for (const node of nodes) {
+    if (map2[node.id]) {
+      throw new Error(`DAG validation error: duplicate node id "${node.id}".`);
+    }
+    const flat = {
+      id: node.id,
+      prompt: node.prompt,
+      enforcement: node.enforcement
+    };
+    if (node.children && node.children.length > 0)
+      flat.children = node.children;
+    if (node.inject && Object.keys(node.inject).length > 0)
+      flat.inject = node.inject;
+    map2[node.id] = flat;
+  }
+  return map2;
+}
+
+// modules/dag_engine/compiler.ts
+import * as fs6 from "fs";
+import * as path6 from "path";
+
+// modules/dag_engine/phase-validation.ts
+var VALID_PHASE_TYPES = new Set([
+  "web-search",
+  "implement-code",
+  "author-documentation",
+  "user-discussion",
+  "user-decision-gate",
+  "agentic-decision-gate",
+  "write-notes",
+  "early-exit"
+]);
+var BRANCHING_PHASE_TYPE_SET = new Set([
+  "agentic-decision-gate",
+  "user-decision-gate"
+]);
+function validatePhaseOptions(phase_type, opts) {
+  const require2 = (field, expectedType) => {
+    if (!(field in opts) || opts[field] === null || opts[field] === undefined) {
+      throw new Error(`Phase type '${phase_type}' requires '${field}' in phase_options.`);
+    }
+    if (expectedType === "string" && typeof opts[field] !== "string") {
+      throw new Error(`'${field}' must be a string.`);
+    }
+    if (expectedType === "string[]" && !Array.isArray(opts[field])) {
+      throw new Error(`'${field}' must be an array of strings.`);
+    }
+  };
+  switch (phase_type) {
+    case "web-search":
+      require2("questions", "string[]");
+      if (opts["research-type"] && !["standard", "deep"].includes(opts["research-type"])) {
+        throw new Error(`Invalid value for 'research-type': '${opts["research-type"]}'. Expected: standard | deep.`);
+      }
+      break;
+    case "implement-code":
+      require2("work-instructions", "string");
+      require2("verification-instructions", "string");
+      break;
+    case "author-documentation":
+      require2("goal", "string");
+      break;
+    case "user-discussion":
+      require2("topic", "string");
+      break;
+    case "user-decision-gate":
+      require2("question", "string");
+      break;
+    case "agentic-decision-gate":
+      require2("question", "string");
+      break;
+    case "write-notes":
+    case "early-exit":
+      break;
+  }
+}
+
+// phase-expander.ts
+import * as fs5 from "fs";
+import * as path5 from "path";
+var EXIT = "__EXIT__";
+function nodeLibPath(componentType) {
+  return path5.join(CONFIG_ROOT, "planning", "plan-session", "node-library", componentType);
+}
+var specCache = new Map;
+function loadNodeSpec(componentType) {
+  if (specCache.has(componentType))
+    return specCache.get(componentType);
+  const dir = nodeLibPath(componentType);
+  const specPath = path5.join(dir, "node-spec.json");
+  const promptPath = path5.join(dir, "prompt.md");
+  if (!fs5.existsSync(specPath)) {
+    throw new Error(`Node spec not found for component "${componentType}" at ${specPath}`);
+  }
+  const spec = JSON.parse(fs5.readFileSync(specPath, "utf-8"));
+  const result = { enforcement: spec.enforcement, promptPath };
+  specCache.set(componentType, result);
+  return result;
+}
+function makeNode(id, componentType, inject, children = []) {
+  const { enforcement, promptPath } = loadNodeSpec(componentType);
+  const node = {
+    id,
+    prompt: promptPath,
+    enforcement,
+    component: componentType
+  };
+  if (Object.keys(inject).length > 0)
+    node.inject = inject;
+  if (children.length > 0)
+    node.children = children;
+  return node;
+}
+function bullets(items) {
+  return items.map((q) => `- ${q}`).join(`
+`);
+}
+function expandExternalResearch(phase) {
+  const questions = phase.phase_options.questions;
+  const researchType = phase.phase_options["research-type"] ?? "standard";
+  const component = researchType === "deep" ? "deep-research" : "external-scout";
+  const nodeId = `${phase.phase}`;
+  const node = makeNode(nodeId, component, {
+    DESCRIPTION: `Running external research for the following questions:
+
+${bullets(questions)}`
+  }, [EXIT]);
+  return {
+    entryNodeId: nodeId,
+    nodes: [node],
+    exitSlots: [{ nodeId, childIndex: 0 }]
+  };
+}
+function expandImplementCode(phase) {
+  const goal = phase.phase_options["work-instructions"];
+  const verifyDescription = phase.phase_options["verification-instructions"];
+  const retries = 5;
+  const commit = phase.phase_options.commit ?? false;
+  const surveyTopics = phase.phase_options["project-survey-topics"] ?? [];
+  const externalQuestions = phase.phase_options["web-search-questions"] ?? [];
+  const internalQuestions = phase.phase_options["deep-search-questions"] ?? [];
+  const setupGoals = phase.phase_options["pre-work-project-setup-instructions"] ?? [];
+  const nodes = [];
+  const exitSlots = [];
+  const preWorkIds = [];
+  if (surveyTopics.length > 0) {
+    const id = `${phase.phase}-survey`;
+    nodes.push(makeNode(id, "context-scout", {
+      DESCRIPTION: `Surveying the following topics:
+
+${bullets(surveyTopics)}`
+    }, []));
+    preWorkIds.push(id);
+  }
+  if (externalQuestions.length > 0) {
+    const id = `${phase.phase}-ext`;
+    nodes.push(makeNode(id, "external-scout", {
+      DESCRIPTION: `Running external research for the following questions:
+
+${bullets(externalQuestions)}`
+    }, []));
+    preWorkIds.push(id);
+  }
+  if (internalQuestions.length > 0) {
+    const id = `${phase.phase}-internal`;
+    nodes.push(makeNode(id, "context-insurgent", {
+      DESCRIPTION: `Investigating the following questions:
+
+${bullets(internalQuestions)}`
+    }, []));
+    preWorkIds.push(id);
+  }
+  if (setupGoals.length > 0) {
+    const id = `${phase.phase}-presetup`;
+    nodes.push(makeNode(id, "project-setup", {
+      DESCRIPTION: `Running the following setup steps:
+
+${bullets(setupGoals)}`
+    }, []));
+    preWorkIds.push(id);
+  }
+  const workId = `${phase.phase}-work`;
+  const fullInject = { GOAL: goal, VERIFY_DESCRIPTION: verifyDescription };
+  const failId = `${phase.phase}-failed`;
+  for (let i = 0;i < preWorkIds.length; i++) {
+    const nextId = i < preWorkIds.length - 1 ? preWorkIds[i + 1] : workId;
+    nodes.find((n) => n.id === preWorkIds[i]).children = [nextId];
+  }
+  const entryNodeId = preWorkIds.length > 0 ? preWorkIds[0] : workId;
+  const verify0Id = `${phase.phase}-verify-0`;
+  nodes.push(makeNode(workId, "junior-dev-work-item", { GOAL: goal }, [verify0Id]));
+  for (let r = 0;r < retries; r++) {
+    const verifyId = `${phase.phase}-verify-${r}`;
+    const triageId = `${phase.phase}-triage-${r + 1}`;
+    const nextVerifyId = `${phase.phase}-verify-${r + 1}`;
+    nodes.push(makeNode(verifyId, "verify-work-item", fullInject, [EXIT, triageId]));
+    exitSlots.push({ nodeId: verifyId, childIndex: 0 });
+    nodes.push(makeNode(triageId, "junior-dev-triage", fullInject, [nextVerifyId]));
+  }
+  const finalVerifyId = `${phase.phase}-verify-${retries}`;
+  nodes.push(makeNode(finalVerifyId, "verify-work-item", fullInject, [EXIT, failId]));
+  exitSlots.push({ nodeId: finalVerifyId, childIndex: 0 });
+  nodes.push(makeNode(failId, "write-notes", {
+    DESCRIPTION: `All triage attempts for "${phase.phase}" were exhausted without passing verification. Document the final failure state: last error output, what was attempted across all cycles, and what a future session would need to resolve this.`
+  }, [EXIT]));
+  if (commit) {
+    const commitId = `${phase.phase}-commit`;
+    nodes.push(makeNode(commitId, "commit", {}, [EXIT]));
+    for (const slot of exitSlots) {
+      const node = nodes.find((n) => n.id === slot.nodeId);
+      node.children[slot.childIndex] = commitId;
+    }
+    return {
+      entryNodeId,
+      nodes,
+      exitSlots: [{ nodeId: commitId, childIndex: 0 }]
+    };
+  }
+  return { entryNodeId, nodes, exitSlots };
+}
+function expandAuthorDocumentation(phase) {
+  const goal = phase.phase_options.goal;
+  const commit = phase.phase_options.commit ?? false;
+  const nodeId = `${phase.phase}-doc`;
+  const nodes = [
+    makeNode(nodeId, "author-documentation", { GOAL: goal }, [EXIT])
+  ];
+  if (commit) {
+    const commitId = `${phase.phase}-commit`;
+    nodes[0].children = [commitId];
+    nodes.push(makeNode(commitId, "commit", {}, [EXIT]));
+    return {
+      entryNodeId: nodeId,
+      nodes,
+      exitSlots: [{ nodeId: commitId, childIndex: 0 }]
+    };
+  }
+  return {
+    entryNodeId: nodeId,
+    nodes,
+    exitSlots: [{ nodeId, childIndex: 0 }]
+  };
+}
+function expandUserDiscussion(phase) {
+  const topic = phase.phase_options.topic;
+  const discussionId = `${phase.phase}-discussion`;
+  const nodes = [];
+  nodes.push(makeNode(discussionId, "user-discussion", { DESCRIPTION: topic }, [EXIT]));
+  return {
+    entryNodeId: discussionId,
+    nodes,
+    exitSlots: [{ nodeId: discussionId, childIndex: 0 }]
+  };
+}
+function expandUserDecisionGate(phase) {
+  const question = phase.phase_options.question;
+  const gateId = `${phase.phase}-gate`;
+  const gateDesc = question;
+  const nodes = [];
+  const gateChildren = new Array(phase.children.length).fill(EXIT);
+  nodes.push(makeNode(gateId, "user-decision-gate", { DESCRIPTION: gateDesc }, gateChildren));
+  const branchMap = new Map;
+  phase.children.forEach((childId, i) => branchMap.set(childId, i));
+  return {
+    entryNodeId: gateId,
+    nodes,
+    exitSlots: [],
+    branchMap,
+    gateNodeId: gateId
+  };
+}
+function expandAgenticDecisionGate(phase) {
+  const question = phase.phase_options.question;
+  const gateId = `${phase.phase}-gate`;
+  const gateDesc = question;
+  const nodes = [];
+  const gateChildren = new Array(phase.children.length).fill(EXIT);
+  nodes.push(makeNode(gateId, "decision-gate", { DESCRIPTION: gateDesc }, gateChildren));
+  const branchMap = new Map;
+  phase.children.forEach((childId, i) => branchMap.set(childId, i));
+  return {
+    entryNodeId: gateId,
+    nodes,
+    exitSlots: [],
+    branchMap,
+    gateNodeId: gateId
+  };
+}
+function expandWriteNotes(phase) {
+  const context = phase.phase_options.context;
+  const noteId = `${phase.phase}-notes`;
+  const desc = context ?? "Document findings, decisions, and context for future reference.";
+  const node = makeNode(noteId, "write-notes", { DESCRIPTION: desc }, [EXIT]);
+  return {
+    entryNodeId: noteId,
+    nodes: [node],
+    exitSlots: [{ nodeId: noteId, childIndex: 0 }]
+  };
+}
+function expandEarlyExit(phase) {
+  const reason = phase.phase_options.reason;
+  const exitId = `${phase.phase}-exit`;
+  const desc = reason ?? "Early exit — document context, reasoning, and any follow-up work for future sessions.";
+  const node = makeNode(exitId, "write-notes", { DESCRIPTION: desc }, [EXIT]);
+  return {
+    entryNodeId: exitId,
+    nodes: [node],
+    exitSlots: [{ nodeId: exitId, childIndex: 0 }]
+  };
+}
+function expandPhase(phase) {
+  switch (phase.phase_type) {
+    case "web-search":
+      return expandExternalResearch(phase);
+    case "implement-code":
+      return expandImplementCode(phase);
+    case "author-documentation":
+      return expandAuthorDocumentation(phase);
+    case "user-discussion":
+      return expandUserDiscussion(phase);
+    case "user-decision-gate":
+      return expandUserDecisionGate(phase);
+    case "agentic-decision-gate":
+      return expandAgenticDecisionGate(phase);
+    case "write-notes":
+      return expandWriteNotes(phase);
+    case "early-exit":
+      return expandEarlyExit(phase);
+    default:
+      throw new Error(`Unknown phase type: ${phase.phase_type}`);
+  }
+}
+function makeAutoExitNote(phase) {
+  const noteId = `${phase.phase}-auto-exit`;
+  const desc = `Execution of phase "${phase.phase}" complete. Document what was accomplished, any deferred items, and context for future sessions.`;
+  return makeNode(noteId, "write-notes", { DESCRIPTION: desc });
+}
+function compilePhasesToNodes(planId, phases, entryPhaseId) {
+  const expansions = new Map;
+  for (const phase of phases) {
+    expansions.set(phase.phase, expandPhase(phase));
+  }
+  const phaseMap = new Map;
+  for (const phase of phases)
+    phaseMap.set(phase.phase, phase);
+  const nodeMap = new Map;
+  for (const [, exp] of expansions) {
+    for (const node of exp.nodes)
+      nodeMap.set(node.id, node);
+  }
+  for (const phase of phases) {
+    const exp = expansions.get(phase.phase);
+    if (exp.branchMap && exp.gateNodeId) {
+      const gateNode = nodeMap.get(exp.gateNodeId);
+      for (const [childPhaseId, childIndex] of exp.branchMap) {
+        const childExp = expansions.get(childPhaseId);
+        if (!childExp)
+          throw new Error(`Phase "${childPhaseId}" not found during wiring`);
+        if (!gateNode.children)
+          gateNode.children = [];
+        gateNode.children[childIndex] = childExp.entryNodeId;
+      }
+    }
+    if (exp.exitSlots.length === 0)
+      continue;
+    const childPhaseIds = phase.children ?? [];
+    if (childPhaseIds.length === 0) {
+      if (phase.phase_type !== "write-notes" && phase.phase_type !== "early-exit") {
+        const autoNote = makeAutoExitNote(phase);
+        nodeMap.set(autoNote.id, autoNote);
+        for (const slot of exp.exitSlots) {
+          const node = nodeMap.get(slot.nodeId);
+          if (!node.children)
+            node.children = [];
+          while (node.children.length <= slot.childIndex)
+            node.children.push(EXIT);
+          node.children[slot.childIndex] = autoNote.id;
+        }
+      }
+    } else if (childPhaseIds.length === 1) {
+      const childExp = expansions.get(childPhaseIds[0]);
+      if (!childExp)
+        throw new Error(`Phase "${childPhaseIds[0]}" not found during wiring`);
+      for (const slot of exp.exitSlots) {
+        const node = nodeMap.get(slot.nodeId);
+        if (!node.children)
+          node.children = [];
+        while (node.children.length <= slot.childIndex)
+          node.children.push(EXIT);
+        node.children[slot.childIndex] = childExp.entryNodeId;
+      }
+    } else {
+      throw new Error(`Phase "${phase.phase}" (${phase.phase_type}) has ${childPhaseIds.length} children but is not a branching type`);
+    }
+  }
+  const kickoffSpec = loadNodeSpec("execution-kickoff");
+  const entryExp = expansions.get(entryPhaseId);
+  if (!entryExp)
+    throw new Error(`Entry phase "${entryPhaseId}" not found`);
+  const kickoff = {
+    id: "execution-kickoff",
+    prompt: kickoffSpec.promptPath,
+    enforcement: kickoffSpec.enforcement,
+    component: "execution-kickoff",
+    children: [entryExp.entryNodeId]
+  };
+  const allNodes = [kickoff, ...nodeMap.values()];
+  for (const node of allNodes) {
+    if (node.children) {
+      node.children = node.children.filter((c) => c !== EXIT);
+      if (node.children.length === 0)
+        delete node.children;
+    }
+  }
+  const metadata = {
+    schema_version: "3.0",
+    id: planId,
+    entry_node_id: "execution-kickoff"
+  };
+  return { metadata, nodes: allNodes };
+}
+
+// modules/dag_engine/compiler.ts
+function compilePlan(plan_name, toml, worktree) {
+  const planDir = path6.join(worktree, ".opencode", "session-plans", plan_name);
+  const phasePlanPath = path6.join(planDir, "phase-plan.toml");
+  const compiledPlanPath = path6.join(planDir, "plan.jsonl");
+  let parsed;
+  try {
+    parsed = Bun.TOML.parse(toml);
+  } catch (e) {
+    throw new Error(`Invalid TOML: ${e.message}`);
+  }
+  const rawPhases = parsed.phases;
+  if (!Array.isArray(rawPhases) || rawPhases.length === 0) {
+    throw new Error("Plan must contain at least one [[phases]] entry.");
+  }
+  const phaseIds = new Set;
+  const phaseList = [];
+  for (const raw of rawPhases) {
+    const id = raw.id;
+    const phase_type = raw.type;
+    if (!id)
+      throw new Error("Every [[phases]] entry must have an id field.");
+    if (!phase_type)
+      throw new Error(`Phase '${id}' is missing a type field.`);
+    if (phaseIds.has(id))
+      throw new Error(`Duplicate phase id: '${id}'.`);
+    phaseIds.add(id);
+    if (!VALID_PHASE_TYPES.has(phase_type)) {
+      throw new Error(`Phase '${id}': invalid type '${phase_type}'. Valid types: ${[...VALID_PHASE_TYPES].join(", ")}.`);
+    }
+    const phase_options = {};
+    for (const [k, v] of Object.entries(raw)) {
+      if (k !== "id" && k !== "type" && k !== "next") {
+        phase_options[k] = v;
+      }
+    }
+    validatePhaseOptions(phase_type, phase_options);
+    phaseList.push({
+      phase: id,
+      phase_type,
+      phase_options,
+      children: []
+    });
+  }
+  const phaseMap = new Map(phaseList.map((p) => [p.phase, p]));
+  const allReferencedIds = new Set;
+  for (const raw of rawPhases) {
+    const nextRaw = raw.next;
+    if (!nextRaw || nextRaw.length === 0)
+      continue;
+    const current = phaseMap.get(raw.id);
+    for (const childId of nextRaw) {
+      if (!phaseMap.has(childId)) {
+        throw new Error(`Phase '${raw.id}': next references unknown phase '${childId}'.`);
+      }
+      if (!current.children.includes(childId)) {
+        current.children.push(childId);
+      }
+      allReferencedIds.add(childId);
+    }
+  }
+  const entryPhases = rawPhases.filter((raw) => !allReferencedIds.has(raw.id));
+  if (entryPhases.length === 0) {
+    throw new Error("Plan has no entry point. Exactly one phase must not appear in any other phase's 'next' array.");
+  }
+  if (entryPhases.length > 1) {
+    const ids = entryPhases.map((p) => `'${p.id}'`).join(", ");
+    throw new Error(`Plan has ${entryPhases.length} entry points (${ids}). Exactly one phase must not appear in any other phase's 'next' array.`);
+  }
+  const entryPhaseId = entryPhases[0].id;
+  for (const phase of phaseList) {
+    if (BRANCHING_PHASE_TYPE_SET.has(phase.phase_type) && phase.children.length < 2) {
+      throw new Error(`Phase '${phase.phase}' (${phase.phase_type}) must have at least 2 child phases. Found ${phase.children.length}.`);
+    }
+    if (!BRANCHING_PHASE_TYPE_SET.has(phase.phase_type) && phase.children.length > 1) {
+      throw new Error(`Phase '${phase.phase}' (${phase.phase_type}) cannot have multiple children. Only agentic-decision-gate and user-decision-gate may branch.`);
+    }
+  }
+  fs6.mkdirSync(planDir, { recursive: true });
+  fs6.writeFileSync(phasePlanPath, toml, "utf-8");
+  const compiled = compilePhasesToNodes(plan_name, phaseList, entryPhaseId);
+  writeDagV3(compiledPlanPath, compiled.metadata, compiled.nodes);
+  return {
+    planDir,
+    phasePlanPath,
+    compiledPlanPath,
+    phaseCount: phaseList.length,
+    nodeCount: compiled.nodes.length
+  };
+}
+function recompilePlan(plan_name, worktree) {
+  const planDir = path6.join(worktree, ".opencode", "session-plans", plan_name);
+  const phasePlanPath = path6.join(planDir, "phase-plan.toml");
+  const compiledPlanPath = path6.join(planDir, "plan.jsonl");
+  if (!fs6.existsSync(phasePlanPath)) {
+    throw new Error(`Plan '${plan_name}' not found. Create it first with create_plan.`);
+  }
+  const toml = fs6.readFileSync(phasePlanPath, "utf-8");
+  const parsed = Bun.TOML.parse(toml);
+  const rawPhases = parsed.phases;
+  const phaseList = [];
+  const phaseMap = new Map;
+  for (const raw of rawPhases) {
+    const phase = {
+      phase: raw.id,
+      phase_type: raw.type,
+      phase_options: Object.fromEntries(Object.entries(raw).filter(([k]) => k !== "id" && k !== "type" && k !== "next")),
+      children: []
+    };
+    phaseList.push(phase);
+    phaseMap.set(phase.phase, phase);
+  }
+  const referencedIds = new Set;
+  for (const raw of rawPhases) {
+    const nextArr = raw.next;
+    if (nextArr) {
+      const current = phaseMap.get(raw.id);
+      for (const childId of nextArr) {
+        if (current && !current.children.includes(childId)) {
+          current.children.push(childId);
+        }
+        referencedIds.add(childId);
+      }
+    }
+  }
+  const entryPhaseId = phaseList.find((p) => !referencedIds.has(p.phase))?.phase ?? phaseList[0].phase;
+  const compiled = compilePhasesToNodes(plan_name, phaseList, entryPhaseId);
+  writeDagV3(compiledPlanPath, compiled.metadata, compiled.nodes);
+  const nodeMap = flattenTreeV3(compiled.metadata, compiled.nodes);
+  return { compiledPlanPath, metadata: compiled.metadata, nodeMap };
+}
+
+// modules/hooks/tool-before-hooks/grepai-lifecycle.ts
+import * as fs7 from "fs";
+import * as path7 from "path";
+function ensureGrepai(worktree) {
+  try {
+    const grepaiDir = path7.join(worktree, ".grepai");
+    if (!fs7.existsSync(grepaiDir)) {
+      Bun.spawnSync(["grepai", "init", "-p", "ollama", "--yes"], {
+        cwd: worktree,
+        stdout: "pipe",
+        stderr: "pipe"
+      });
+    }
+    Bun.spawn(["grepai", "watch", "--background"], {
+      cwd: worktree,
+      stdout: "pipe",
+      stderr: "pipe"
+    });
+  } catch {}
+}
+
+// modules/tools/session-tools.ts
+function createSessionTools(deps) {
+  const { resolveWorktree } = deps;
+  return {
+    plan_session: tool({
+      description: "Start a /plan-session planning session. Copies the global planning DAG locally and activates it.",
+      args: {},
+      async execute(_args, context) {
+        const worktree = resolveWorktree(context);
+        ensureGrepai(worktree);
+        const { localPlanPath, metadata, nodes } = copyPlanningDag("plan-session", context.sessionID, worktree);
+        const plan_name = `plan-session-${context.sessionID}`;
+        const promptsPrefix = `.opencode/session-plans/${plan_name}/prompts/`;
+        for (const node of nodes) {
+          if (!node.prompt.includes("/"))
+            node.prompt = `${promptsPrefix}${node.prompt}`;
+        }
+        const nodeMap = flattenTreeV3(metadata, nodes);
+        const entryNode = nodeMap[metadata.entry_node_id];
+        if (!entryNode)
+          throw new Error(`Entry node "${metadata.entry_node_id}" not found in DAG`);
+        const statePath = dagStatePath(worktree, context.sessionID);
+        const state = {
+          dag_id: metadata.id,
+          plan_path: localPlanPath,
+          status: "running",
+          current_node: metadata.entry_node_id,
+          todo_index: 0,
+          started_at: now(),
+          updated_at: now(),
+          decisions: [],
+          node_map: nodeMap,
+          planning_session_id: plan_name
+        };
+        writeState(statePath, state);
+        if (entryNode.enforcement.length === 0) {
+          state.status = entryNode.children && entryNode.children.length > 0 ? "waiting_step" : "complete";
+          writeState(statePath, state);
+        }
+        return `Planning session has begun. Wait for your next step.`;
+      }
+    }),
+    activate_plan: tool({
+      description: "Activate a project DAG produced by a planning session.",
+      args: {
+        plan_name: tool.schema.string().describe("The plan name.")
+      },
+      async execute({ plan_name }, context) {
+        const worktree = resolveWorktree(context);
+        ensureGrepai(worktree);
+        const { compiledPlanPath, metadata, nodeMap } = recompilePlan(plan_name, worktree);
+        const entryNode = nodeMap[metadata.entry_node_id];
+        if (!entryNode)
+          throw new Error(`Entry node "${metadata.entry_node_id}" not found in DAG "${plan_name}"`);
+        const statePath = dagStatePath(worktree, context.sessionID);
+        const state = {
+          dag_id: metadata.id,
+          plan_path: compiledPlanPath,
+          status: "running",
+          current_node: metadata.entry_node_id,
+          todo_index: 0,
+          started_at: now(),
+          updated_at: now(),
+          decisions: [],
+          node_map: nodeMap,
+          plan_name
+        };
+        writeState(statePath, state);
+        if (entryNode.enforcement.length === 0) {
+          state.status = entryNode.children && entryNode.children.length > 0 ? "waiting_step" : "complete";
+          writeState(statePath, state);
+        }
+        return `Plan execution has begun. Wait for your next step.`;
+      }
+    })
+  };
+}
+
+// path-utils.ts
+import * as fs8 from "fs";
+import * as path8 from "path";
+function expandPath(p) {
+  if (p.startsWith("~/")) {
+    const home = process.env.HOME || process.env.USERPROFILE || "";
+    return path8.join(home, p.slice(2));
+  }
+  return p;
+}
+function readPrompt(promptPath, worktree, sessionPath, vars) {
+  const expanded = expandPath(promptPath);
+  let content;
+  if (path8.isAbsolute(expanded)) {
+    content = fs8.readFileSync(expanded, "utf-8");
+  } else {
+    content = fs8.readFileSync(path8.join(worktree, expanded), "utf-8");
+  }
+  if (sessionPath) {
+    content = content.replaceAll("{{SESSION_PATH}}", sessionPath);
+    content = content.replaceAll("{{SESSION_NAME}}", path8.basename(sessionPath));
+  }
+  if (vars?.plan_name) {
+    content = content.replaceAll("{{PLAN_NAME}}", vars.plan_name);
+  }
+  if (vars?.planning_session_id) {
+    content = content.replaceAll("{{PLANNING_SESSION_ID}}", vars.planning_session_id);
+  }
+  if (vars?.inject) {
+    for (const [key, value] of Object.entries(vars.inject)) {
+      content = content.replaceAll(`{{${key}}}`, value);
+    }
+  }
+  return content;
 }
 
 // divergence-detection.ts
@@ -104334,6 +105011,17 @@ function suggestRecoveryActions(report) {
   return [...new Set(actions)];
 }
 
+// modules/dag_engine/enforcement-utils.ts
+function isOptional(item) {
+  return item.startsWith("optional:");
+}
+function getToolName(item) {
+  return item.startsWith("optional:") ? item.slice("optional:".length) : item;
+}
+function allRemainingOptional(enforcement, fromIndex) {
+  return enforcement.slice(fromIndex).every(isOptional);
+}
+
 // modules/tools/navigation-tools.ts
 function createNavigationTools(deps) {
   const { resolveWorktree } = deps;
@@ -104348,10 +105036,28 @@ function createNavigationTools(deps) {
         const state = readState(statePath);
         if (!state)
           return "No active DAG session.";
+        if (state.status === "complete")
+          return `DAG session "${state.dag_id}" is already complete.`;
+        const currentNode = state.node_map[state.current_node];
+        const canProceed = state.status === "waiting_step" || (currentNode ? allRemainingOptional(currentNode.enforcement, state.todo_index) : true);
+        if (!canProceed) {
+          const remaining = currentNode ? currentNode.enforcement.length - state.todo_index : 0;
+          const nextExpected = currentNode ? currentNode.enforcement[state.todo_index] ?? "none" : "unknown";
+          throw new Error(`Cannot call next_step — node "${state.current_node}" still has ${remaining} enforcement item(s) pending. ` + `Next expected tool: "${nextExpected}". Call "${nextExpected}" to continue, ` + `then call next_step when all enforcement items are complete.`);
+        }
         const node = state.node_map[state.current_node];
         if (!node)
           return `Current node "${state.current_node}" not found in DAG.`;
         const children = node.children ?? [];
+        if (children.length > 1) {
+          if (!next) {
+            throw new Error(`[BRANCH REQUIRED] Node "${state.current_node}" has multiple children.
+` + `Call next_step with the next parameter. Valid options: [${children.join(", ")}].`);
+          }
+          if (!children.includes(next)) {
+            throw new Error(`Invalid branch "${next}". Valid options: [${children.join(", ")}]`);
+          }
+        }
         if (children.length === 0) {
           state.status = "complete";
           state.updated_at = now();
@@ -104519,959 +105225,8 @@ Pending Branch Choice: [${currentNode.children.join(", ")}]
 }
 
 // modules/tools/planning-tools.ts
-import * as fs7 from "fs";
-import * as path7 from "path";
-
-// modules/dag_engine/compiler.ts
-import * as fs6 from "fs";
-import * as path6 from "path";
-
-// modules/dag_engine/phase-validation.ts
-var VALID_PHASE_TYPES = new Set([
-  "web-search",
-  "deep-project-search-and-analysis",
-  "project-survey",
-  "work",
-  "project-setup",
-  "user-discussion",
-  "user-decision-gate",
-  "agentic-decision-gate",
-  "write-notes",
-  "early-exit"
-]);
-var BRANCHING_PHASE_TYPE_SET = new Set([
-  "agentic-decision-gate",
-  "user-decision-gate"
-]);
-function validatePhaseOptions(phase_type, opts) {
-  const require2 = (field, expectedType) => {
-    if (!(field in opts) || opts[field] === null || opts[field] === undefined) {
-      throw new Error(`Phase type '${phase_type}' requires '${field}' in phase_options.`);
-    }
-    if (expectedType === "string" && typeof opts[field] !== "string") {
-      throw new Error(`'${field}' must be a string.`);
-    }
-    if (expectedType === "string[]" && !Array.isArray(opts[field])) {
-      throw new Error(`'${field}' must be an array of strings.`);
-    }
-  };
-  switch (phase_type) {
-    case "web-search":
-      require2("questions", "string[]");
-      if (opts["research-type"] && !["standard", "deep"].includes(opts["research-type"])) {
-        throw new Error(`Invalid value for 'research-type': '${opts["research-type"]}'. Expected: standard | deep.`);
-      }
-      break;
-    case "work":
-      require2("work-instructions", "string");
-      require2("work-type", "string");
-      require2("verification-instructions", "string");
-      require2("project-survey-topics", "string[]");
-      require2("deep-search-questions", "string[]");
-      if (!["code", "docs"].includes(opts["work-type"])) {
-        throw new Error(`Invalid value for 'work-type': '${opts["work-type"]}'. Expected: code | docs.`);
-      }
-      break;
-    case "user-discussion":
-      require2("topic", "string");
-      break;
-    case "user-decision-gate":
-      require2("question", "string");
-      break;
-    case "agentic-decision-gate":
-      require2("question", "string");
-      break;
-    case "write-notes":
-    case "early-exit":
-      break;
-  }
-}
-
-// phase-expander.ts
-import * as fs5 from "fs";
-import * as path5 from "path";
-
-// constants.ts
-import * as path4 from "path";
-var CONFIG_ROOT = path4.dirname(import.meta.dirname);
-var exemptTools = [
-  "question",
-  "qdrant_qdrant-store",
-  "qdrant_qdrant-find",
-  "recover_context",
-  "next_step",
-  "exit_plan",
-  "skill"
-];
-function isExempt(toolName) {
-  return exemptTools.includes(toolName);
-}
-
-// phase-expander.ts
-var EXIT = "__EXIT__";
-function nodeLibPath(componentType) {
-  return path5.join(CONFIG_ROOT, "planning", "plan-session", "node-library", componentType);
-}
-var specCache = new Map;
-function loadNodeSpec(componentType) {
-  if (specCache.has(componentType))
-    return specCache.get(componentType);
-  const dir = nodeLibPath(componentType);
-  const specPath = path5.join(dir, "node-spec.json");
-  const promptPath = path5.join(dir, "prompt.md");
-  if (!fs5.existsSync(specPath)) {
-    throw new Error(`Node spec not found for component "${componentType}" at ${specPath}`);
-  }
-  const spec = JSON.parse(fs5.readFileSync(specPath, "utf-8"));
-  const result = { enforcement: spec.enforcement, promptPath };
-  specCache.set(componentType, result);
-  return result;
-}
-function makeNode(id, componentType, inject, children = []) {
-  const { enforcement, promptPath } = loadNodeSpec(componentType);
-  const node = {
-    id,
-    prompt: promptPath,
-    enforcement,
-    component: componentType
-  };
-  if (Object.keys(inject).length > 0)
-    node.inject = inject;
-  if (children.length > 0)
-    node.children = children;
-  return node;
-}
-function bullets(items) {
-  return items.map((q) => `- ${q}`).join(`
-`);
-}
-function expandExternalResearch(phase) {
-  const questions = phase.phase_options.questions;
-  const researchType = phase.phase_options["research-type"] ?? "standard";
-  const component = researchType === "deep" ? "deep-research" : "external-scout";
-  const nodeId = `${phase.phase}`;
-  const node = makeNode(nodeId, component, {
-    DESCRIPTION: `Running external research for the following questions:
-
-${bullets(questions)}`
-  }, [EXIT]);
-  return {
-    entryNodeId: nodeId,
-    nodes: [node],
-    exitSlots: [{ nodeId, childIndex: 0 }]
-  };
-}
-function expandInternalResearch(phase) {
-  const questions = phase.phase_options.questions;
-  const scoutId = `${phase.phase}-scout`;
-  const insurgentId = `${phase.phase}-insurgent`;
-  const nodes = [
-    makeNode(scoutId, "context-scout", {
-      DESCRIPTION: `Surveying the following topics:
-
-${bullets(questions)}`
-    }, [insurgentId]),
-    makeNode(insurgentId, "context-insurgent", {
-      DESCRIPTION: `Investigating the following questions:
-
-${bullets(questions)}`
-    }, [EXIT])
-  ];
-  return {
-    entryNodeId: scoutId,
-    nodes,
-    exitSlots: [{ nodeId: insurgentId, childIndex: 0 }]
-  };
-}
-function expandProjectSurvey(phase) {
-  const topics = phase.phase_options.topics;
-  const nodeId = `${phase.phase}`;
-  const node = makeNode(nodeId, "context-scout", { DESCRIPTION: `Surveying the following topics:
-
-${bullets(topics)}` }, [EXIT]);
-  return {
-    entryNodeId: nodeId,
-    nodes: [node],
-    exitSlots: [{ nodeId, childIndex: 0 }]
-  };
-}
-function expandWork(phase) {
-  const goal = phase.phase_options["work-instructions"];
-  const workType = phase.phase_options["work-type"];
-  const verifyDescription = phase.phase_options["verification-instructions"];
-  const retries = 5;
-  const commit = phase.phase_options.commit ?? false;
-  const workComponent = workType === "docs" ? "documentation-expert-work-item" : "junior-dev-work-item";
-  const fixComponent = workType === "docs" ? "documentation-expert-fix-item" : "junior-dev-fix-item";
-  const surveyTopics = phase.phase_options["project-survey-topics"] ?? [];
-  const externalQuestions = phase.phase_options["web-search-questions"] ?? [];
-  const internalQuestions = phase.phase_options["deep-search-questions"] ?? [];
-  const setupGoals = phase.phase_options["pre-work-project-setup-instructions"] ?? [];
-  const nodes = [];
-  const exitSlots = [];
-  const preWorkIds = [];
-  if (surveyTopics.length > 0) {
-    const id = `${phase.phase}-survey`;
-    nodes.push(makeNode(id, "context-scout", {
-      DESCRIPTION: `Surveying the following topics:
-
-${bullets(surveyTopics)}`
-    }, []));
-    preWorkIds.push(id);
-  }
-  if (externalQuestions.length > 0) {
-    const id = `${phase.phase}-ext`;
-    nodes.push(makeNode(id, "external-scout", {
-      DESCRIPTION: `Running external research for the following questions:
-
-${bullets(externalQuestions)}`
-    }, []));
-    preWorkIds.push(id);
-  }
-  if (internalQuestions.length > 0) {
-    const id = `${phase.phase}-internal`;
-    nodes.push(makeNode(id, "context-insurgent", {
-      DESCRIPTION: `Investigating the following questions:
-
-${bullets(internalQuestions)}`
-    }, []));
-    preWorkIds.push(id);
-  }
-  if (setupGoals.length > 0) {
-    const id = `${phase.phase}-presetup`;
-    nodes.push(makeNode(id, "project-setup", {
-      DESCRIPTION: `Running the following setup steps:
-
-${bullets(setupGoals)}`
-    }, []));
-    preWorkIds.push(id);
-  }
-  const workId = `${phase.phase}-work`;
-  const initialVerifyId = `${phase.phase}-verify`;
-  for (let i = 0;i < preWorkIds.length; i++) {
-    const nextId = i < preWorkIds.length - 1 ? preWorkIds[i + 1] : workId;
-    nodes.find((n) => n.id === preWorkIds[i]).children = [nextId];
-  }
-  const entryNodeId = preWorkIds.length > 0 ? preWorkIds[0] : workId;
-  const triage1Id = `${phase.phase}-triage-1`;
-  nodes.push(makeNode(workId, workComponent, { GOAL: goal, VERIFY_DESCRIPTION: verifyDescription }, [initialVerifyId]));
-  nodes.push(makeNode(initialVerifyId, "verify-work-item", { GOAL: goal, VERIFY_DESCRIPTION: verifyDescription }, [EXIT, triage1Id]));
-  exitSlots.push({ nodeId: initialVerifyId, childIndex: 0 });
-  for (let r = 1;r <= retries; r++) {
-    const triageId = `${phase.phase}-triage-${r}`;
-    const fixId = `${phase.phase}-fix-${r}`;
-    const verifyRId = `${phase.phase}-verify-${r}`;
-    nodes.push(makeNode(triageId, "verify-triage", { GOAL: goal, VERIFY_DESCRIPTION: verifyDescription }, [fixId]));
-    nodes.push(makeNode(fixId, fixComponent, { GOAL: goal, VERIFY_DESCRIPTION: verifyDescription }, [verifyRId]));
-    if (r < retries) {
-      const nextTriageId = `${phase.phase}-triage-${r + 1}`;
-      nodes.push(makeNode(verifyRId, "verify-work-item", { GOAL: goal, VERIFY_DESCRIPTION: verifyDescription }, [EXIT, nextTriageId]));
-      exitSlots.push({ nodeId: verifyRId, childIndex: 0 });
-    } else {
-      nodes.push(makeNode(verifyRId, "verify-work-item", { GOAL: goal, VERIFY_DESCRIPTION: verifyDescription }, [EXIT]));
-      exitSlots.push({ nodeId: verifyRId, childIndex: 0 });
-    }
-  }
-  if (commit) {
-    const commitId = `${phase.phase}-commit`;
-    nodes.push(makeNode(commitId, "commit", {}, [EXIT]));
-    for (const slot of exitSlots) {
-      const node = nodes.find((n) => n.id === slot.nodeId);
-      node.children[slot.childIndex] = commitId;
-    }
-    return {
-      entryNodeId,
-      nodes,
-      exitSlots: [{ nodeId: commitId, childIndex: 0 }]
-    };
-  }
-  return { entryNodeId, nodes, exitSlots };
-}
-function expandProjectCommands(phase) {
-  const goals = phase.phase_options.goals;
-  const commit = phase.phase_options.commit ?? false;
-  const nodeId = `${phase.phase}`;
-  const nodes = [
-    makeNode(nodeId, "project-setup", {
-      DESCRIPTION: `Running the following setup steps:
-
-${bullets(goals)}`
-    }, [EXIT])
-  ];
-  if (commit) {
-    const commitId = `${phase.phase}-commit`;
-    nodes[0].children = [commitId];
-    nodes.push(makeNode(commitId, "commit", {}, [EXIT]));
-    return {
-      entryNodeId: nodeId,
-      nodes,
-      exitSlots: [{ nodeId: commitId, childIndex: 0 }]
-    };
-  }
-  return {
-    entryNodeId: nodeId,
-    nodes,
-    exitSlots: [{ nodeId, childIndex: 0 }]
-  };
-}
-function expandUserDiscussion(phase) {
-  const topic = phase.phase_options.topic;
-  const discussionId = `${phase.phase}-discussion`;
-  const nodes = [];
-  nodes.push(makeNode(discussionId, "user-discussion", { DESCRIPTION: topic }, [EXIT]));
-  return {
-    entryNodeId: discussionId,
-    nodes,
-    exitSlots: [{ nodeId: discussionId, childIndex: 0 }]
-  };
-}
-function expandUserDecisionGate(phase) {
-  const question = phase.phase_options.question;
-  const gateId = `${phase.phase}-gate`;
-  const gateDesc = question;
-  const nodes = [];
-  const gateChildren = new Array(phase.children.length).fill(EXIT);
-  nodes.push(makeNode(gateId, "user-decision-gate", { DESCRIPTION: gateDesc }, gateChildren));
-  const branchMap = new Map;
-  phase.children.forEach((childId, i) => branchMap.set(childId, i));
-  return {
-    entryNodeId: gateId,
-    nodes,
-    exitSlots: [],
-    branchMap,
-    gateNodeId: gateId
-  };
-}
-function expandAgenticDecisionGate(phase) {
-  const question = phase.phase_options.question;
-  const gateId = `${phase.phase}-gate`;
-  const gateDesc = question;
-  const nodes = [];
-  const gateChildren = new Array(phase.children.length).fill(EXIT);
-  nodes.push(makeNode(gateId, "decision-gate", { DESCRIPTION: gateDesc }, gateChildren));
-  const branchMap = new Map;
-  phase.children.forEach((childId, i) => branchMap.set(childId, i));
-  return {
-    entryNodeId: gateId,
-    nodes,
-    exitSlots: [],
-    branchMap,
-    gateNodeId: gateId
-  };
-}
-function expandWriteNotes(phase) {
-  const context = phase.phase_options.context;
-  const noteId = `${phase.phase}-notes`;
-  const desc = context ?? "Document findings, decisions, and context for future reference.";
-  const node = makeNode(noteId, "write-notes", { DESCRIPTION: desc }, [EXIT]);
-  return {
-    entryNodeId: noteId,
-    nodes: [node],
-    exitSlots: [{ nodeId: noteId, childIndex: 0 }]
-  };
-}
-function expandEarlyExit(phase) {
-  const reason = phase.phase_options.reason;
-  const exitId = `${phase.phase}-exit`;
-  const desc = reason ?? "Early exit — document context, reasoning, and any follow-up work for future sessions.";
-  const node = makeNode(exitId, "write-notes", { DESCRIPTION: desc }, [EXIT]);
-  return {
-    entryNodeId: exitId,
-    nodes: [node],
-    exitSlots: [{ nodeId: exitId, childIndex: 0 }]
-  };
-}
-function expandPhase(phase) {
-  switch (phase.phase_type) {
-    case "web-search":
-      return expandExternalResearch(phase);
-    case "deep-project-search-and-analysis":
-      return expandInternalResearch(phase);
-    case "project-survey":
-      return expandProjectSurvey(phase);
-    case "work":
-      return expandWork(phase);
-    case "project-setup":
-      return expandProjectCommands(phase);
-    case "user-discussion":
-      return expandUserDiscussion(phase);
-    case "user-decision-gate":
-      return expandUserDecisionGate(phase);
-    case "agentic-decision-gate":
-      return expandAgenticDecisionGate(phase);
-    case "write-notes":
-      return expandWriteNotes(phase);
-    case "early-exit":
-      return expandEarlyExit(phase);
-    default:
-      throw new Error(`Unknown phase type: ${phase.phase_type}`);
-  }
-}
-function makeAutoExitNote(phase) {
-  const noteId = `${phase.phase}-auto-exit`;
-  const desc = `Execution of phase "${phase.phase}" complete. Document what was accomplished, any deferred items, and context for future sessions.`;
-  return makeNode(noteId, "write-notes", { DESCRIPTION: desc });
-}
-function compilePhasesToNodes(planId, phases, entryPhaseId) {
-  const expansions = new Map;
-  for (const phase of phases) {
-    expansions.set(phase.phase, expandPhase(phase));
-  }
-  const phaseMap = new Map;
-  for (const phase of phases)
-    phaseMap.set(phase.phase, phase);
-  const nodeMap = new Map;
-  for (const [, exp] of expansions) {
-    for (const node of exp.nodes)
-      nodeMap.set(node.id, node);
-  }
-  for (const phase of phases) {
-    const exp = expansions.get(phase.phase);
-    if (exp.branchMap && exp.gateNodeId) {
-      const gateNode = nodeMap.get(exp.gateNodeId);
-      for (const [childPhaseId, childIndex] of exp.branchMap) {
-        const childExp = expansions.get(childPhaseId);
-        if (!childExp)
-          throw new Error(`Phase "${childPhaseId}" not found during wiring`);
-        if (!gateNode.children)
-          gateNode.children = [];
-        gateNode.children[childIndex] = childExp.entryNodeId;
-      }
-    }
-    if (exp.exitSlots.length === 0)
-      continue;
-    const childPhaseIds = phase.children ?? [];
-    if (childPhaseIds.length === 0) {
-      if (phase.phase_type !== "write-notes" && phase.phase_type !== "early-exit") {
-        const autoNote = makeAutoExitNote(phase);
-        nodeMap.set(autoNote.id, autoNote);
-        for (const slot of exp.exitSlots) {
-          const node = nodeMap.get(slot.nodeId);
-          if (!node.children)
-            node.children = [];
-          while (node.children.length <= slot.childIndex)
-            node.children.push(EXIT);
-          node.children[slot.childIndex] = autoNote.id;
-        }
-      }
-    } else if (childPhaseIds.length === 1) {
-      const childExp = expansions.get(childPhaseIds[0]);
-      if (!childExp)
-        throw new Error(`Phase "${childPhaseIds[0]}" not found during wiring`);
-      for (const slot of exp.exitSlots) {
-        const node = nodeMap.get(slot.nodeId);
-        if (!node.children)
-          node.children = [];
-        while (node.children.length <= slot.childIndex)
-          node.children.push(EXIT);
-        node.children[slot.childIndex] = childExp.entryNodeId;
-      }
-    } else {
-      throw new Error(`Phase "${phase.phase}" (${phase.phase_type}) has ${childPhaseIds.length} children but is not a branching type`);
-    }
-  }
-  const kickoffSpec = loadNodeSpec("execution-kickoff");
-  const entryExp = expansions.get(entryPhaseId);
-  if (!entryExp)
-    throw new Error(`Entry phase "${entryPhaseId}" not found`);
-  const kickoff = {
-    id: "execution-kickoff",
-    prompt: kickoffSpec.promptPath,
-    enforcement: kickoffSpec.enforcement,
-    component: "execution-kickoff",
-    children: [entryExp.entryNodeId]
-  };
-  const allNodes = [kickoff, ...nodeMap.values()];
-  for (const node of allNodes) {
-    if (node.children) {
-      node.children = node.children.filter((c) => c !== EXIT);
-      if (node.children.length === 0)
-        delete node.children;
-    }
-  }
-  const metadata = {
-    schema_version: "3.0",
-    id: planId,
-    entry_node_id: "execution-kickoff"
-  };
-  return { metadata, nodes: allNodes };
-}
-
-// dag-tree.ts
-function flattenTreeV3(metadata, nodes) {
-  const map2 = {};
-  for (const node of nodes) {
-    if (map2[node.id]) {
-      throw new Error(`DAG validation error: duplicate node id "${node.id}".`);
-    }
-    const flat = {
-      id: node.id,
-      prompt: node.prompt,
-      enforcement: node.enforcement
-    };
-    if (node.children && node.children.length > 0)
-      flat.children = node.children;
-    if (node.inject && Object.keys(node.inject).length > 0)
-      flat.inject = node.inject;
-    map2[node.id] = flat;
-  }
-  return map2;
-}
-
-// modules/dag_engine/compiler.ts
-function compilePlan(plan_name, toml, worktree) {
-  const planDir = path6.join(worktree, ".opencode", "session-plans", plan_name);
-  const phasePlanPath = path6.join(planDir, "phase-plan.toml");
-  const compiledPlanPath = path6.join(planDir, "plan.jsonl");
-  let parsed;
-  try {
-    parsed = Bun.TOML.parse(toml);
-  } catch (e) {
-    throw new Error(`Invalid TOML: ${e.message}`);
-  }
-  const rawPhases = parsed.phases;
-  if (!Array.isArray(rawPhases) || rawPhases.length === 0) {
-    throw new Error("Plan must contain at least one [[phases]] entry.");
-  }
-  const phaseIds = new Set;
-  const phaseList = [];
-  for (const raw of rawPhases) {
-    const id = raw.id;
-    const phase_type = raw.type;
-    if (!id)
-      throw new Error("Every [[phases]] entry must have an id field.");
-    if (!phase_type)
-      throw new Error(`Phase '${id}' is missing a type field.`);
-    if (phaseIds.has(id))
-      throw new Error(`Duplicate phase id: '${id}'.`);
-    phaseIds.add(id);
-    if (!VALID_PHASE_TYPES.has(phase_type)) {
-      throw new Error(`Phase '${id}': invalid type '${phase_type}'. Valid types: ${[...VALID_PHASE_TYPES].join(", ")}.`);
-    }
-    const phase_options = {};
-    for (const [k, v] of Object.entries(raw)) {
-      if (k !== "id" && k !== "type" && k !== "next") {
-        phase_options[k] = v;
-      }
-    }
-    validatePhaseOptions(phase_type, phase_options);
-    phaseList.push({
-      phase: id,
-      phase_type,
-      phase_options,
-      children: []
-    });
-  }
-  const phaseMap = new Map(phaseList.map((p) => [p.phase, p]));
-  const allReferencedIds = new Set;
-  for (const raw of rawPhases) {
-    const nextRaw = raw.next;
-    if (!nextRaw || nextRaw.length === 0)
-      continue;
-    const current = phaseMap.get(raw.id);
-    for (const childId of nextRaw) {
-      if (!phaseMap.has(childId)) {
-        throw new Error(`Phase '${raw.id}': next references unknown phase '${childId}'.`);
-      }
-      if (!current.children.includes(childId)) {
-        current.children.push(childId);
-      }
-      allReferencedIds.add(childId);
-    }
-  }
-  const entryPhases = rawPhases.filter((raw) => !allReferencedIds.has(raw.id));
-  if (entryPhases.length === 0) {
-    throw new Error("Plan has no entry point. Exactly one phase must not appear in any other phase's 'next' array.");
-  }
-  if (entryPhases.length > 1) {
-    const ids = entryPhases.map((p) => `'${p.id}'`).join(", ");
-    throw new Error(`Plan has ${entryPhases.length} entry points (${ids}). Exactly one phase must not appear in any other phase's 'next' array.`);
-  }
-  const entryPhaseId = entryPhases[0].id;
-  for (const phase of phaseList) {
-    if (BRANCHING_PHASE_TYPE_SET.has(phase.phase_type) && phase.children.length < 2) {
-      throw new Error(`Phase '${phase.phase}' (${phase.phase_type}) must have at least 2 child phases. Found ${phase.children.length}.`);
-    }
-    if (!BRANCHING_PHASE_TYPE_SET.has(phase.phase_type) && phase.children.length > 1) {
-      throw new Error(`Phase '${phase.phase}' (${phase.phase_type}) cannot have multiple children. Only agentic-decision-gate and user-decision-gate may branch.`);
-    }
-  }
-  fs6.mkdirSync(planDir, { recursive: true });
-  fs6.writeFileSync(phasePlanPath, toml, "utf-8");
-  const compiled = compilePhasesToNodes(plan_name, phaseList, entryPhaseId);
-  writeDagV3(compiledPlanPath, compiled.metadata, compiled.nodes);
-  return {
-    planDir,
-    phasePlanPath,
-    compiledPlanPath,
-    phaseCount: phaseList.length,
-    nodeCount: compiled.nodes.length
-  };
-}
-function recompilePlan(plan_name, worktree) {
-  const planDir = path6.join(worktree, ".opencode", "session-plans", plan_name);
-  const phasePlanPath = path6.join(planDir, "phase-plan.toml");
-  const compiledPlanPath = path6.join(planDir, "plan.jsonl");
-  if (!fs6.existsSync(phasePlanPath)) {
-    throw new Error(`Plan '${plan_name}' not found. Create it first with create_plan.`);
-  }
-  const toml = fs6.readFileSync(phasePlanPath, "utf-8");
-  const parsed = Bun.TOML.parse(toml);
-  const rawPhases = parsed.phases;
-  const phaseList = [];
-  const phaseMap = new Map;
-  for (const raw of rawPhases) {
-    const phase = {
-      phase: raw.id,
-      phase_type: raw.type,
-      phase_options: Object.fromEntries(Object.entries(raw).filter(([k]) => k !== "id" && k !== "type" && k !== "next")),
-      children: []
-    };
-    phaseList.push(phase);
-    phaseMap.set(phase.phase, phase);
-  }
-  const referencedIds = new Set;
-  for (const raw of rawPhases) {
-    const nextArr = raw.next;
-    if (nextArr) {
-      const current = phaseMap.get(raw.id);
-      for (const childId of nextArr) {
-        if (current && !current.children.includes(childId)) {
-          current.children.push(childId);
-        }
-        referencedIds.add(childId);
-      }
-    }
-  }
-  const entryPhaseId = phaseList.find((p) => !referencedIds.has(p.phase))?.phase ?? phaseList[0].phase;
-  const compiled = compilePhasesToNodes(plan_name, phaseList, entryPhaseId);
-  writeDagV3(compiledPlanPath, compiled.metadata, compiled.nodes);
-  const nodeMap = flattenTreeV3(compiled.metadata, compiled.nodes);
-  return { compiledPlanPath, metadata: compiled.metadata, nodeMap };
-}
-
-// modules/tools/planning-tools.ts
-function createPlanningTools(deps) {
-  const { client, resolveWorktree } = deps;
-  return {
-    present_plan_diagram: tool({
-      description: "Render the phase-based plan as an ASCII diagram and inject it into the conversation as a system message for the user to review. Use this after the plan is complete to present it to the user.",
-      args: {
-        plan_name: tool.schema.string().describe("The plan name.")
-      },
-      async execute({ plan_name }, _toolCtx) {
-        return "The plan diagram has been presented to the user as a system message. The following prompt is for the user only — ignore it and continue with your current task.";
-      }
-    }),
-    choose_plan_name: tool({
-      description: "Set the execution plan name for this planning session. Substitutes {{PLAN_NAME}} in all remaining node prompts in the current session's node map. Call this during the session-overview node after deciding on a plan name.",
-      args: {
-        name: tool.schema.string().describe("The name for the execution plan that will be designed in this planning session. Descriptive and human-memorable — this is what the user will type into /activate-plan. Lowercase, hyphens only, no spaces (e.g., 'add-auth-flow', 'fix-payment-bug').")
-      },
-      async execute({ name }, context) {
-        const worktree = resolveWorktree(context);
-        const statePath = dagStatePath(worktree, context.sessionID);
-        const state = readState(statePath);
-        if (!state) {
-          throw new Error("No active DAG session. choose_plan_name must be called during an active planning session.");
-        }
-        if (!name || name.trim().length === 0) {
-          throw new Error("choose_plan_name: name must not be empty.");
-        }
-        const sessionPlansDir = path7.join(worktree, ".opencode", "session-plans");
-        let confirmedName = name.trim();
-        let suffix = 2;
-        while (fs7.existsSync(path7.join(sessionPlansDir, confirmedName))) {
-          confirmedName = `${name.trim()}-${suffix}`;
-          suffix++;
-        }
-        state.plan_name = confirmedName;
-        state.updated_at = now();
-        writeState(statePath, state);
-        const dedupeNote = confirmedName !== name.trim() ? ` (deduplicated from "${name.trim()}" — directory already existed)` : "";
-        return `Plan name set to "${confirmedName}"${dedupeNote}. {{PLAN_NAME}} will be substituted in all subsequent planning prompts automatically.`;
-      }
-    }),
-    create_plan: tool({
-      description: "Compile a TOML phase plan into an executable DAG. Validates the plan, writes it to disk, and compiles it to a node graph ready for activation. Call this after the finalized plan has been reviewed and approved.",
-      args: {
-        plan_name: tool.schema.string().describe("The plan name (set by choose_plan_name)."),
-        toml: tool.schema.string().describe("The complete finalized plan in TOML format.")
-      },
-      async execute({ plan_name, toml }, context) {
-        const worktree = resolveWorktree(context);
-        const result = compilePlan(plan_name, toml, worktree);
-        return `Plan '${plan_name}' compiled successfully. ${result.phaseCount} phases compiled to ${result.nodeCount} execution nodes. Use present_plan_diagram to present to the user, then activate with /activate-plan ${plan_name}.`;
-      }
-    })
-  };
-}
-
-// modules/tools/grepai-tools.ts
-function runGrepai(args, cwd) {
-  const result = Bun.spawnSync(["grepai", ...args], {
-    cwd,
-    stdout: "pipe",
-    stderr: "pipe"
-  });
-  const out = result.stdout.toString().trim();
-  const err = result.stderr.toString().trim();
-  if (result.exitCode !== 0) {
-    return err ? `grepai error (exit ${result.exitCode}): ${err}` : `grepai exited with code ${result.exitCode}`;
-  }
-  return out || "(no output)";
-}
-function createGrepaiTools(deps) {
-  const { resolveWorktree } = deps;
-  return {
-    smart_grep_index_status: tool({
-      description: "Check if the semantic search index is ready. Call this before using smart_grep_search to confirm the index is populated — if it is empty, smart_grep_search will return no results.",
-      args: {},
-      async execute(_args, context) {
-        return runGrepai(["status"], resolveWorktree(context));
-      }
-    }),
-    smart_grep_search: tool({
-      description: "Find any code, function, config, or pattern using plain English. Faster and smarter than text search — describe what you're looking for and smart_grep finds it across the entire codebase, even if you don't know the exact filename or symbol name. Use path to narrow results to a specific file or directory.",
-      args: {
-        query: tool.schema.string().describe("Plain-language description of what you're looking for"),
-        path: tool.schema.string().optional().describe("File or directory path to restrict the search to"),
-        limit: tool.schema.number().optional().describe("Maximum number of results (default: 10)")
-      },
-      async execute({ query, path: pathArg, limit }, context) {
-        const args = ["search", query];
-        if (pathArg)
-          args.push("--path", pathArg);
-        if (limit !== undefined)
-          args.push("--limit", String(limit));
-        return runGrepai(args, resolveWorktree(context));
-      }
-    }),
-    smart_grep_trace_callers: tool({
-      description: "Find every place in the codebase that calls a function or method. Use this before modifying anything to understand blast radius — who will be affected by changes to this symbol.",
-      args: {
-        symbol: tool.schema.string().describe("Function or method name to find callers for")
-      },
-      async execute({ symbol: symbol2 }, context) {
-        return runGrepai(["trace", "callers", symbol2], resolveWorktree(context));
-      }
-    }),
-    smart_grep_trace_callees: tool({
-      description: "Find everything a function or method calls. Use this to understand what a symbol depends on without reading every line of code.",
-      args: {
-        symbol: tool.schema.string().describe("Function or method name to find callees for")
-      },
-      async execute({ symbol: symbol2 }, context) {
-        return runGrepai(["trace", "callees", symbol2], resolveWorktree(context));
-      }
-    }),
-    smart_grep_trace_graph: tool({
-      description: "Get the complete call graph around a function — both who calls it and what it calls — in a single view. Use this to trace execution flow, understand the full dependency chain, or map the impact of a change.",
-      args: {
-        symbol: tool.schema.string().describe("Function or method name to build the call graph for"),
-        depth: tool.schema.number().optional().describe("How many levels deep to traverse (default: 2)")
-      },
-      async execute({ symbol: symbol2, depth }, context) {
-        const args = ["trace", "graph", symbol2];
-        if (depth !== undefined)
-          args.push("--depth", String(depth));
-        return runGrepai(args, resolveWorktree(context));
-      }
-    })
-  };
-}
-
-// dag-lifecycle.ts
-import * as fs8 from "fs";
-import * as path8 from "path";
-function copyPlanningDag(planType, sessionId, worktree, configRoot = CONFIG_ROOT) {
-  const srcDir = path8.join(configRoot, "planning", planType);
-  const destDirName = `${planType}-${sessionId}`;
-  const destDir = path8.join(worktree, ".opencode", "session-plans", destDirName);
-  const srcPromptsDir = path8.join(srcDir, "prompts");
-  const destPromptsDir = path8.join(destDir, "prompts");
-  fs8.mkdirSync(destPromptsDir, { recursive: true });
-  const sessionPath = `.opencode/session-plans/${destDirName}`;
-  function copyPromptFile(src, dest) {
-    const content = fs8.readFileSync(src, "utf-8");
-    fs8.writeFileSync(dest, content.replaceAll("{{SESSION_PATH}}", sessionPath), "utf-8");
-  }
-  if (fs8.existsSync(srcPromptsDir)) {
-    for (const file2 of fs8.readdirSync(srcPromptsDir)) {
-      copyPromptFile(path8.join(srcPromptsDir, file2), path8.join(destPromptsDir, file2));
-    }
-  }
-  const refDir = path8.join(configRoot, "planning", "reference");
-  if (fs8.existsSync(refDir)) {
-    const destRefDir = path8.join(destDir, "reference");
-    fs8.mkdirSync(destRefDir, { recursive: true });
-    for (const file2 of fs8.readdirSync(refDir)) {
-      copyPromptFile(path8.join(refDir, file2), path8.join(destRefDir, file2));
-    }
-  }
-  const srcPlanPath = path8.join(srcDir, "plan.jsonl");
-  const localPlanPath = path8.join(destDir, "plan.jsonl");
-  const { metadata, nodes } = readDagV3(srcPlanPath);
-  writeDagV3(localPlanPath, metadata, nodes);
-  return { localPlanPath, metadata, nodes };
-}
-
-// modules/hooks/tool-before-hooks/grepai-lifecycle.ts
 import * as fs9 from "fs";
 import * as path9 from "path";
-function ensureGrepai(worktree) {
-  try {
-    const grepaiDir = path9.join(worktree, ".grepai");
-    if (!fs9.existsSync(grepaiDir)) {
-      Bun.spawnSync(["grepai", "init", "-p", "ollama", "--yes"], {
-        cwd: worktree,
-        stdout: "pipe",
-        stderr: "pipe"
-      });
-    }
-    Bun.spawn(["grepai", "watch", "--background"], {
-      cwd: worktree,
-      stdout: "pipe",
-      stderr: "pipe"
-    });
-  } catch {}
-}
-
-// modules/hooks/tool-before-hooks/plan-session.ts
-async function handlePlanSessionBefore(input, _output, deps) {
-  if (input.tool !== "plan_session")
-    return false;
-  const worktree = deps.resolveWorktree(deps.pluginCtx);
-  ensureGrepai(worktree);
-  const { localPlanPath, metadata, nodes } = copyPlanningDag("plan-session", input.sessionID, worktree);
-  const plan_name = `plan-session-${input.sessionID}`;
-  const promptsPrefix = `.opencode/session-plans/${plan_name}/prompts/`;
-  for (const node of nodes) {
-    if (!node.prompt.includes("/"))
-      node.prompt = `${promptsPrefix}${node.prompt}`;
-  }
-  const nodeMap = flattenTreeV3(metadata, nodes);
-  const entryNode = nodeMap[metadata.entry_node_id];
-  if (!entryNode)
-    throw new Error(`Entry node "${metadata.entry_node_id}" not found in DAG`);
-  const statePath = dagStatePath(worktree, input.sessionID);
-  const state = {
-    dag_id: metadata.id,
-    plan_path: localPlanPath,
-    status: "running",
-    current_node: metadata.entry_node_id,
-    todo_index: 0,
-    started_at: now(),
-    updated_at: now(),
-    decisions: [],
-    node_map: nodeMap,
-    planning_session_id: plan_name
-  };
-  writeState(statePath, state);
-  if (entryNode.enforcement.length === 0) {
-    const hasNext = entryNode.children && entryNode.children.length > 0;
-    state.status = hasNext ? "waiting_step" : "complete";
-    writeState(statePath, state);
-  }
-  await new Promise((resolve2) => setTimeout(resolve2, 1000));
-  return true;
-}
-
-// modules/hooks/tool-before-hooks/activate-plan.ts
-async function handleActivatePlanBefore(input, output, deps) {
-  if (input.tool !== "activate_plan")
-    return false;
-  const plan_name = output.args?.plan_name;
-  if (!plan_name)
-    throw new Error("plan_name is required");
-  const worktree = deps.resolveWorktree(deps.pluginCtx);
-  ensureGrepai(worktree);
-  const { compiledPlanPath, metadata, nodeMap } = recompilePlan(plan_name, worktree);
-  const entryNode = nodeMap[metadata.entry_node_id];
-  if (!entryNode) {
-    throw new Error(`Entry node "${metadata.entry_node_id}" not found in DAG "${plan_name}"`);
-  }
-  const statePath = dagStatePath(worktree, input.sessionID);
-  const state = {
-    dag_id: metadata.id,
-    plan_path: compiledPlanPath,
-    status: "running",
-    current_node: metadata.entry_node_id,
-    todo_index: 0,
-    started_at: now(),
-    updated_at: now(),
-    decisions: [],
-    node_map: nodeMap,
-    plan_name
-  };
-  writeState(statePath, state);
-  if (entryNode.enforcement.length === 0) {
-    state.status = entryNode.children && entryNode.children.length > 0 ? "waiting_step" : "complete";
-    writeState(statePath, state);
-  }
-  await new Promise((resolve2) => setTimeout(resolve2, 1000));
-  return true;
-}
-
-// modules/dag_engine/enforcement-utils.ts
-function isOptional(item) {
-  return item.startsWith("optional:");
-}
-function getToolName(item) {
-  return item.startsWith("optional:") ? item.slice("optional:".length) : item;
-}
-function allRemainingOptional(enforcement, fromIndex) {
-  return enforcement.slice(fromIndex).every(isOptional);
-}
-
-// modules/hooks/tool-before-hooks/next-step.ts
-async function handleNextStepBefore(input, output, deps) {
-  if (input.tool !== "next_step")
-    return false;
-  const worktree = deps.resolveWorktree(deps.pluginCtx);
-  const statePath = dagStatePath(worktree, input.sessionID);
-  const state = readState(statePath);
-  if (!state) {
-    throw new Error("No active DAG session. Start one with plan_session() or activate_plan().");
-  }
-  if (state.status === "complete") {
-    throw new Error("DAG session is already complete.");
-  }
-  const currentNode = state.node_map[state.current_node];
-  const canProceed = state.status === "waiting_step" || (currentNode ? allRemainingOptional(currentNode.enforcement, state.todo_index) : true);
-  if (!canProceed) {
-    const remaining = currentNode ? currentNode.enforcement.length - state.todo_index : 0;
-    const nextExpected = currentNode ? currentNode.enforcement[state.todo_index] ?? "none" : "unknown";
-    throw new Error(`Cannot call next_step — node "${state.current_node}" still has ${remaining} enforcement item(s) pending. ` + `Next expected tool: "${nextExpected}". Call "${nextExpected}" to continue, ` + `then call next_step when all enforcement items are complete.`);
-  }
-  const node = state.node_map[state.current_node];
-  if (!node) {
-    throw new Error(`Current node "${state.current_node}" not found in DAG.`);
-  }
-  const children = node.children ?? [];
-  if (children.length === 0)
-    return true;
-  const next = output.args?.next;
-  if (children.length > 1) {
-    if (!next) {
-      throw new Error(`[BRANCH REQUIRED] Node "${state.current_node}" has multiple children.
-` + `Call next_step with the next parameter. Valid options: [${children.join(", ")}].`);
-    }
-    if (!children.includes(next)) {
-      throw new Error(`Invalid branch "${next}". Valid options: [${children.join(", ")}]`);
-    }
-  }
-  const nextId = children.length === 1 ? children[0] : next;
-  const nextNode = state.node_map[nextId];
-  if (!nextNode)
-    throw new Error(`Next node "${nextId}" not found in DAG`);
-  await new Promise((resolve2) => setTimeout(resolve2, 1000));
-  return true;
-}
-
-// modules/hooks/tool-before-hooks/present-plan-diagram.ts
-import * as fs10 from "fs";
-import * as path10 from "path";
 
 // node_modules/beautiful-mermaid/dist/index.js
 var import_elk_bundled = __toESM(require_elk_bundled(), 1);
@@ -106629,13 +106384,13 @@ function getPath(grid, from, to) {
   while (pq.length > 0) {
     const current = pq.pop().coord;
     if (gridCoordEquals(current, to)) {
-      const path10 = [];
+      const path9 = [];
       let c = current;
       while (c !== null) {
-        path10.unshift(c);
+        path9.unshift(c);
         c = cameFrom.get(gridKey(c)) ?? null;
       }
-      return path10;
+      return path9;
     }
     const currentCost = costSoFar.get(gridKey(current));
     for (const dir of MOVE_DIRS) {
@@ -106656,14 +106411,14 @@ function getPath(grid, from, to) {
   }
   return null;
 }
-function mergePath(path10) {
-  if (path10.length <= 2)
-    return path10;
+function mergePath(path9) {
+  if (path9.length <= 2)
+    return path9;
   const toRemove = /* @__PURE__ */ new Set;
-  let step0 = path10[0];
-  let step1 = path10[1];
-  for (let idx = 2;idx < path10.length; idx++) {
-    const step2 = path10[idx];
+  let step0 = path9[0];
+  let step1 = path9[1];
+  for (let idx = 2;idx < path9.length; idx++) {
+    const step2 = path9[idx];
     const prevDx = step1.x - step0.x;
     const prevDy = step1.y - step0.y;
     const dx = step2.x - step1.x;
@@ -106674,7 +106429,7 @@ function mergePath(path10) {
     step0 = step1;
     step1 = step2;
   }
-  return path10.filter((_, i) => !toRemove.has(i));
+  return path9.filter((_, i) => !toRemove.has(i));
 }
 function getOpposite(d) {
   if (d === Up)
@@ -107878,13 +107633,13 @@ function reverseDirection(dir) {
     return UpperLeft;
   return Middle;
 }
-function drawPath(graph, path10, style = "solid") {
+function drawPath(graph, path9, style = "solid") {
   const canvas = copyCanvas(graph.canvas);
-  let previousCoord = path10[0];
+  let previousCoord = path9[0];
   const linesDrawn = [];
   const lineDirs = [];
-  for (let i = 1;i < path10.length; i++) {
-    const nextCoord = path10[i];
+  for (let i = 1;i < path9.length; i++) {
+    const nextCoord = path9[i];
     const prevDC = gridToDrawingCoord(graph, previousCoord);
     const nextDC = gridToDrawingCoord(graph, nextCoord);
     if (drawingCoordEquals(prevDC, nextDC)) {
@@ -107901,7 +107656,7 @@ function drawPath(graph, path10, style = "solid") {
   }
   return [canvas, linesDrawn, lineDirs];
 }
-function drawBoxStart(graph, path10, firstLine, sourceShape) {
+function drawBoxStart(graph, path9, firstLine, sourceShape) {
   const canvas = copyCanvas(graph.canvas);
   if (graph.config.useAscii)
     return canvas;
@@ -107909,7 +107664,7 @@ function drawBoxStart(graph, path10, firstLine, sourceShape) {
     return canvas;
   }
   const from = firstLine[0];
-  const dir = determineDirection(path10[0], path10[1]);
+  const dir = determineDirection(path9[0], path9[1]);
   if (dirEquals(dir, Up))
     canvas[from.x][from.y + 1] = "┴";
   else if (dirEquals(dir, Down))
@@ -107992,13 +107747,13 @@ function drawArrowHead(graph, lastLine, fallbackDir) {
   canvas[lastPos.x][lastPos.y] = char;
   return canvas;
 }
-function drawCorners(graph, path10) {
+function drawCorners(graph, path9) {
   const canvas = copyCanvas(graph.canvas);
-  for (let idx = 1;idx < path10.length - 1; idx++) {
-    const coord = path10[idx];
+  for (let idx = 1;idx < path9.length - 1; idx++) {
+    const coord = path9[idx];
     const dc = gridToDrawingCoord(graph, coord);
-    const prevDir = determineDirection(path10[idx - 1], coord);
-    const nextDir = determineDirection(coord, path10[idx + 1]);
+    const prevDir = determineDirection(path9[idx - 1], coord);
+    const nextDir = determineDirection(coord, path9[idx + 1]);
     let corner;
     if (!graph.config.useAscii) {
       if (dirEquals(prevDir, Right) && dirEquals(nextDir, Down) || dirEquals(prevDir, Up) && dirEquals(nextDir, Left)) {
@@ -108608,8 +108363,8 @@ function setColumnWidth(graph, node) {
     graph.rowHeight.set(gc.y - 1, Math.max(current, basePadding));
   }
 }
-function increaseGridSizeForPath(graph, path10) {
-  for (const c of path10) {
+function increaseGridSizeForPath(graph, path9) {
+  for (const c of path9) {
     if (!graph.columnWidth.has(c.x)) {
       graph.columnWidth.set(c.x, Math.floor(graph.config.paddingX / 2));
     }
@@ -111213,57 +110968,178 @@ function renderMermaidASCII(text, options = {}) {
 var MONO_FONT = "'JetBrains Mono'";
 var MONO_FONT_STACK = `${MONO_FONT}, 'SF Mono', 'Fira Code', ui-monospace, monospace`;
 
-// modules/hooks/tool-before-hooks/present-plan-diagram.ts
-async function handlePresentPlanDiagramBefore(input, output, deps) {
-  if (input.tool !== "present_plan_diagram")
-    return false;
-  const plan_name = output.args?.plan_name;
-  if (!plan_name)
-    throw new Error("plan_name is required");
-  const worktree = deps.resolveWorktree(deps.pluginCtx);
-  const tomlPath = path10.join(worktree, ".opencode", "session-plans", plan_name, "phase-plan.toml");
-  if (!fs10.existsSync(tomlPath)) {
-    throw new Error(`Plan '${plan_name}' not found. Create it first with create_plan.`);
-  }
-  const toml = fs10.readFileSync(tomlPath, "utf-8");
-  const parsed = Bun.TOML.parse(toml);
-  const rawPhases = parsed.phases ?? [];
-  const childrenMap = new Map;
-  for (const raw of rawPhases)
-    childrenMap.set(raw.id, []);
-  for (const raw of rawPhases) {
-    const nextArr = raw.next;
-    if (nextArr) {
-      const children = childrenMap.get(raw.id);
-      if (children) {
-        for (const childId of nextArr)
-          children.push(childId);
-      }
-    }
-  }
-  const mermaidLines = ["flowchart TD"];
-  const sanitize = (id) => id.replace(/-/g, "_");
-  for (const raw of rawPhases) {
-    const nodeId = sanitize(raw.id);
-    const phaseType = raw.type ?? "";
-    const label = `${raw.id}
+// modules/tools/planning-tools.ts
+function createPlanningTools(deps) {
+  const { client, resolveWorktree } = deps;
+  return {
+    present_plan_diagram: tool({
+      description: "Render the phase-based plan as an ASCII diagram and inject it into the conversation as a system message for the user to review. Use this after the plan is complete to present it to the user.",
+      args: {
+        plan_name: tool.schema.string().describe("The plan name.")
+      },
+      async execute({ plan_name }, context) {
+        const worktree = resolveWorktree(context);
+        const tomlPath = path9.join(worktree, ".opencode", "session-plans", plan_name, "phase-plan.toml");
+        if (!fs9.existsSync(tomlPath)) {
+          throw new Error(`Plan '${plan_name}' not found. Create it first with create_plan.`);
+        }
+        const toml = fs9.readFileSync(tomlPath, "utf-8");
+        const parsed = Bun.TOML.parse(toml);
+        const rawPhases = parsed.phases ?? [];
+        const childrenMap = new Map;
+        for (const raw of rawPhases)
+          childrenMap.set(raw.id, []);
+        for (const raw of rawPhases) {
+          const nextArr = raw.next;
+          if (nextArr) {
+            const children = childrenMap.get(raw.id);
+            if (children) {
+              for (const childId of nextArr)
+                children.push(childId);
+            }
+          }
+        }
+        const mermaidLines = ["flowchart TD"];
+        const sanitize = (id) => id.replace(/-/g, "_");
+        for (const raw of rawPhases) {
+          const nodeId = sanitize(raw.id);
+          const phaseType = raw.type ?? "";
+          const label = `${raw.id}
 [${phaseType}]`;
-    mermaidLines.push(`  ${nodeId}["${label}"]`);
-    for (const child of childrenMap.get(raw.id) ?? []) {
-      mermaidLines.push(`  ${nodeId} --> ${sanitize(child)}`);
-    }
-  }
-  const mermaid = mermaidLines.join(`
+          mermaidLines.push(`  ${nodeId}["${label}"]`);
+          for (const child of childrenMap.get(raw.id) ?? []) {
+            mermaidLines.push(`  ${nodeId} --> ${sanitize(child)}`);
+          }
+        }
+        const mermaid = mermaidLines.join(`
 `);
-  const ascii = renderMermaidASCII(mermaid, { colorMode: "none" });
-  const diagramText = `Plan: ${plan_name}
+        const ascii = renderMermaidASCII(mermaid, { colorMode: "none" });
+        const diagramText = `Plan: ${plan_name}
 
 ${ascii}`;
-  deps.client.session.prompt({
-    path: { id: input.sessionID },
-    body: { parts: [{ type: "text", text: diagramText }], noReply: true }
+        client.session.prompt({
+          path: { id: context.sessionID },
+          body: { parts: [{ type: "text", text: diagramText }], noReply: true }
+        });
+        return "The plan diagram has been presented to the user as a system message. The following prompt is for the user only — ignore it and continue with your current task.";
+      }
+    }),
+    choose_plan_name: tool({
+      description: "Set the execution plan name for this planning session. Substitutes {{PLAN_NAME}} in all remaining node prompts in the current session's node map. Call this during the session-overview node after deciding on a plan name.",
+      args: {
+        name: tool.schema.string().describe("The name for the execution plan that will be designed in this planning session. Descriptive and human-memorable — this is what the user will type into /activate-plan. Lowercase, hyphens only, no spaces (e.g., 'add-auth-flow', 'fix-payment-bug').")
+      },
+      async execute({ name }, context) {
+        const worktree = resolveWorktree(context);
+        const statePath = dagStatePath(worktree, context.sessionID);
+        const state = readState(statePath);
+        if (!state) {
+          throw new Error("No active DAG session. choose_plan_name must be called during an active planning session.");
+        }
+        if (!name || name.trim().length === 0) {
+          throw new Error("choose_plan_name: name must not be empty.");
+        }
+        const sessionPlansDir = path9.join(worktree, ".opencode", "session-plans");
+        let confirmedName = name.trim();
+        let suffix = 2;
+        while (fs9.existsSync(path9.join(sessionPlansDir, confirmedName))) {
+          confirmedName = `${name.trim()}-${suffix}`;
+          suffix++;
+        }
+        state.plan_name = confirmedName;
+        state.updated_at = now();
+        writeState(statePath, state);
+        const dedupeNote = confirmedName !== name.trim() ? ` (deduplicated from "${name.trim()}" — directory already existed)` : "";
+        return `Plan name set to "${confirmedName}"${dedupeNote}. {{PLAN_NAME}} will be substituted in all subsequent planning prompts automatically.`;
+      }
+    }),
+    create_plan: tool({
+      description: "Compile a TOML phase plan into an executable DAG. Validates the plan, writes it to disk, and compiles it to a node graph ready for activation. Call this after the finalized plan has been reviewed and approved.",
+      args: {
+        plan_name: tool.schema.string().describe("The plan name (set by choose_plan_name)."),
+        toml: tool.schema.string().describe("The complete finalized plan in TOML format.")
+      },
+      async execute({ plan_name, toml }, context) {
+        const worktree = resolveWorktree(context);
+        const result = compilePlan(plan_name, toml, worktree);
+        return `Plan '${plan_name}' compiled successfully. ${result.phaseCount} phases compiled to ${result.nodeCount} execution nodes. Use present_plan_diagram to present to the user, then activate with /activate-plan ${plan_name}.`;
+      }
+    })
+  };
+}
+
+// modules/tools/grepai-tools.ts
+function runGrepai(args, cwd) {
+  const result = Bun.spawnSync(["grepai", ...args], {
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe"
   });
-  return true;
+  const out = result.stdout.toString().trim();
+  const err = result.stderr.toString().trim();
+  if (result.exitCode !== 0) {
+    return err ? `grepai error (exit ${result.exitCode}): ${err}` : `grepai exited with code ${result.exitCode}`;
+  }
+  return out || "(no output)";
+}
+function createGrepaiTools(deps) {
+  const { resolveWorktree } = deps;
+  return {
+    smart_grep_index_status: tool({
+      description: "Check if the semantic search index is ready. Call this before using smart_grep_search to confirm the index is populated — if it is empty, smart_grep_search will return no results.",
+      args: {},
+      async execute(_args, context) {
+        return runGrepai(["status"], resolveWorktree(context));
+      }
+    }),
+    smart_grep_search: tool({
+      description: "Find any code, function, config, or pattern using plain English. Faster and smarter than text search — describe what you're looking for and smart_grep finds it across the entire codebase, even if you don't know the exact filename or symbol name. Use path to narrow results to a specific file or directory.",
+      args: {
+        query: tool.schema.string().describe("Plain-language description of what you're looking for"),
+        path: tool.schema.string().optional().describe("File or directory path to restrict the search to"),
+        limit: tool.schema.number().optional().describe("Maximum number of results (default: 10)")
+      },
+      async execute({ query, path: pathArg, limit }, context) {
+        const args = ["search", query];
+        if (pathArg)
+          args.push("--path", pathArg);
+        if (limit !== undefined)
+          args.push("--limit", String(limit));
+        return runGrepai(args, resolveWorktree(context));
+      }
+    }),
+    smart_grep_trace_callers: tool({
+      description: "Find every place in the codebase that calls a function or method. Use this before modifying anything to understand blast radius — who will be affected by changes to this symbol.",
+      args: {
+        symbol: tool.schema.string().describe("Function or method name to find callers for")
+      },
+      async execute({ symbol: symbol2 }, context) {
+        return runGrepai(["trace", "callers", symbol2], resolveWorktree(context));
+      }
+    }),
+    smart_grep_trace_callees: tool({
+      description: "Find everything a function or method calls. Use this to understand what a symbol depends on without reading every line of code.",
+      args: {
+        symbol: tool.schema.string().describe("Function or method name to find callees for")
+      },
+      async execute({ symbol: symbol2 }, context) {
+        return runGrepai(["trace", "callees", symbol2], resolveWorktree(context));
+      }
+    }),
+    smart_grep_trace_graph: tool({
+      description: "Get the complete call graph around a function — both who calls it and what it calls — in a single view. Use this to trace execution flow, understand the full dependency chain, or map the impact of a change.",
+      args: {
+        symbol: tool.schema.string().describe("Function or method name to build the call graph for"),
+        depth: tool.schema.number().optional().describe("How many levels deep to traverse (default: 2)")
+      },
+      async execute({ symbol: symbol2, depth }, context) {
+        const args = ["trace", "graph", symbol2];
+        if (depth !== undefined)
+          args.push("--depth", String(depth));
+        return runGrepai(args, resolveWorktree(context));
+      }
+    })
+  };
 }
 
 // modules/hooks/tool-before-hooks/enforcement.ts
@@ -111313,11 +111189,7 @@ async function handleEnforcementBefore(input, _output, deps) {
 
 // modules/hooks/before-hook.ts
 var pipeline = [
-  handleEnforcementBefore,
-  handlePlanSessionBefore,
-  handleActivatePlanBefore,
-  handlePresentPlanDiagramBefore,
-  handleNextStepBefore
+  handleEnforcementBefore
 ];
 async function beforeHook(input, output, deps) {
   if (!input.tool || !input.sessionID)
@@ -111345,16 +111217,10 @@ async function handlePlanSessionAfter(input, _output, deps) {
   const promptText = readPrompt(entryNode.prompt, worktree, sessionPath, {
     planning_session_id: state.planning_session_id
   });
-  const deferredPromptInjection = async (_input = input, _deferredDeps = deps, _promptText = promptText) => {
-    await new Promise((resolve2) => {
-      setTimeout(resolve2, 2000);
-    });
-    _deferredDeps.client.session.prompt({
-      path: { id: _input.sessionID },
-      body: { parts: [{ type: "text", text: _promptText }] }
-    });
-  };
-  deferredPromptInjection();
+  deps.client.session.prompt({
+    path: { id: input.sessionID },
+    body: { parts: [{ type: "text", text: promptText }] }
+  });
   return true;
 }
 
@@ -111375,16 +111241,10 @@ async function handleActivatePlanAfter(input, _output, deps) {
     plan_name: state.plan_name,
     inject: entryNode.inject
   });
-  const deferredPromptInjection = async (_input = input, _deferredDeps = deps, _promptText = promptText) => {
-    await new Promise((resolve2) => {
-      setTimeout(resolve2, 2000);
-    });
-    _deferredDeps.client.session.prompt({
-      path: { id: _input.sessionID },
-      body: { parts: [{ type: "text", text: _promptText }] }
-    });
-  };
-  deferredPromptInjection();
+  deps.client.session.prompt({
+    path: { id: input.sessionID },
+    body: { parts: [{ type: "text", text: promptText }] }
+  });
   return true;
 }
 
@@ -111411,16 +111271,10 @@ async function handleNextStepAfter(input, _output, deps) {
     planning_session_id: state.planning_session_id,
     inject: currentNode.inject
   });
-  const deferredPromptInjection = async (_input = input, _deferredDeps = deps, _promptText = promptText) => {
-    await new Promise((resolve2) => {
-      setTimeout(resolve2, 2000);
-    });
-    _deferredDeps.client.session.prompt({
-      path: { id: _input.sessionID },
-      body: { parts: [{ type: "text", text: _promptText }] }
-    });
-  };
-  deferredPromptInjection();
+  deps.client.session.prompt({
+    path: { id: input.sessionID },
+    body: { parts: [{ type: "text", text: promptText }] }
+  });
   return true;
 }
 

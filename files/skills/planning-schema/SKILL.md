@@ -43,27 +43,40 @@ next = [<branch-a>, <branch-b>, ...]    # branch phase ids (required) -- must ha
 question = "..."                        # decision question for the executor to answer from evidence (required)
 ```
 
-## work
-Researches, implements, and verifies a goal. Includes automatic retries on failure. Provide comprehensive instructions for both work and verification. *Always* include references to pre-work steps in the `*-instructions` fields, this helps provide continuity between steps.
+## implement-code
+Researches, implements, verifies, and retries a code goal. Junior-dev handles the full cycle — implementation, running builds/tests, and all triage — in a `work → [triage] × 5` chain. Failure after all retries exits the plan.
 
-This is especially relevant when working with external dependencies/resources as it gives tailwrench, junior-dev and documentation-expert subagents delegated at these steps the required context to perform their own web searches in addition to the pre-work web research if needed. The instructions should include:
+Provide comprehensive instructions for both work and verification. *Always* include references to pre-work steps in the `*-instructions` fields — this provides continuity between steps and gives junior-dev the context to perform its own web searches as it works.
+
+This is especially relevant when working with external dependencies/resources. The instructions should include:
 
 - external dependencies involved
-- web searches that tailwrench/junior-dev/documentation-expert should perform as they work, in addition to the pre-work web research (never assume that the orchestrating agent will provide this info on their own)
+- web searches junior-dev should perform as it works, in addition to the pre-work web research (never assume the orchestrating agent will relay this on its own)
 
 ```toml
 [[phases]]
 id = <phase-id>                            # unique descriptive identifier (required)
-type = "work"                              # phase type (required)
+type = "implement-code"                    # phase type (required)
 next = [<child-id>]                        # next phase ids (required) -- use [] for leaf/exit phases
-work-type = "code"                         # implementation type (required) -- "code" or "docs"
-project-survey-topics = ["...", ...]       # codebase areas to survey as a high-level overview before work (required)
-web-search-questions = ["...", ...]   # work-related web research, e.g. user docs, APIs, etc. (optional) -- required for every work phase if work involves external dependencies
-deep-search-questions = ["...", ...]  # codebase search and analysis before work (required)
-pre-work-project-setup-instructions = ["...", ...]   # project setup instructions to complete before work (optional) -- required if project setup is necessary for the work phase, include references to web research and codebase search as needed
-work-instructions = "..."    # detailed instructions for completing the work (required) -- include references to project survey, web research, codebase search, and project setup
-verification-instructions = "..."                 # success criteria (required) -- ensures the work was completed successfully via tailwrench, includes compilation, checking against external resources, running tests, visual checks, etc.
+project-survey-topics = ["...", ...]       # codebase areas to survey as a high-level overview before work (optional)
+web-search-questions = ["...", ...]        # work-related web research, e.g. user docs, APIs, etc. (optional) -- required if work involves external dependencies
+deep-search-questions = ["...", ...]       # codebase search and analysis before work (optional)
+pre-work-project-setup-instructions = ["...", ...]  # project setup steps to run before work (optional)
+work-instructions = "..."                  # detailed instructions for completing the work (required) -- include references to pre-work steps, external deps, and web searches junior-dev should run
+verification-instructions = "..."         # success criteria (required) -- what junior-dev must verify after implementing: compilation, test output, visual checks, API responses, etc.
 commit = false                             # commit after successful verify (optional) -- default false
+```
+
+## author-documentation
+Delegates a documentation goal to documentation-expert. Single node, no retry loop. Use for writing, updating, or restructuring docs — not for any code changes.
+
+```toml
+[[phases]]
+id = <phase-id>                            # unique descriptive identifier (required)
+type = "author-documentation"             # phase type (required)
+next = [<child-id>]                        # next phase ids (required) -- use [] for leaf/exit phases
+goal = "..."                               # documentation goal (required) -- what to write, update, or restructure
+commit = false                             # commit after completion (optional) -- default false
 ```
 
 ## write-notes

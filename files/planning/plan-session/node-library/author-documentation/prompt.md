@@ -1,26 +1,26 @@
-# Code Implementation
+# Documentation
 
-**Subagent:** junior-dev
+**Subagent:** documentation-expert
 **Goal:** {{GOAL}}
 
 ## Hard Rules
 
-1. Write your prompt as instructions *to* junior-dev — treat it as a message to another agent.
-2. Call the `task` tool with `subagent_type=junior-dev`.
-3. Do not ask junior-dev to run build, test, or any verification commands — a dedicated verify step runs after this node.
+1. Write your prompt as instructions *to* documentation-expert — treat it as a message to another agent.
+2. Call the `task` tool with `subagent_type=documentation-expert`.
+3. Documentation-expert can only edit documentation files — never ask it to make code changes.
 
 ## Preflight Checks
 
 ```
 [preflight]
-subagent_type = junior-dev
+subagent_type = documentation-expert
 description = <3-5 word description of the task>
 ```
 
 ## Prepare Delegation Protocol
 
-1. Call `qdrant_qdrant-find` with `collection_name={{PLAN_NAME}}`, as needed, to retrieve research findings, code conventions, architectural decisions, and constraints from prior steps.
-2. Draft a prompt for junior-dev that includes: the implementation goal, prior research context, and what to report back (what was implemented, files changed, decisions made).
+1. Call `qdrant_qdrant-find` with `collection_name={{PLAN_NAME}}`, as needed, to retrieve verified code facts, API shapes, behavioral findings, and documentation conventions from prior steps.
+2. Draft a prompt for documentation-expert that includes: the documentation goal, verified technical facts it must use as source-of-truth, documentation conventions to follow, and what to report back.
 3. Include web search instructions verbatim: "Use web search tools as you work, e.g. API docs, build system integration, best practices, headers, user guides, etc. Never assume prior knowledge or provided context is enough. Verify everything."
 
 ## Delegation Gate
@@ -31,6 +31,7 @@ prompt_addresses_subagent_directly = <true/false>
 prompt_includes_web_search_instructions = <true/false>
 prompt_includes_retrieved_context = <true/false>
 prompt_specifies_return_format = <true/false>
+prompt_no_code_changes = <true/false>
 gate_passed = <true/false>
 ```
 
@@ -40,16 +41,16 @@ If `gate_passed` is false, revise before delegating. Once it passes, call the `t
 
 Categorize the report into distinct notes. Call `qdrant_qdrant-store` with `collection_name={{PLAN_NAME}}` once per note.
 
-At minimum, capture: what was implemented, files changed, and any decisions that affect verification.
+At minimum, capture: what was written, files changed, any decisions or assumptions that downstream steps should know about.
 
 ```toml
 [note-gate]
 notes_stored = <list each note topic>
-implementation_captured = <true/false>
+files_changed_captured = <true/false>
 gate_passed = <true/false>
 ```
 
-If `gate_passed` is false, add missing notes before proceeding. The verify step depends on these notes.
+If `gate_passed` is false, add missing notes before proceeding.
 
 ## How to Proceed
 

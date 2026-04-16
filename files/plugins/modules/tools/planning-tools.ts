@@ -16,7 +16,60 @@ export function createPlanningTools(deps: PluginDeps) {
       args: {
         plan_name: tool.schema.string().describe("The plan name."),
       },
-      async execute({ plan_name }, _toolCtx) {
+      async execute({ plan_name }, context) {
+        const worktree = resolveWorktree(context);
+        const tomlPath = path.join(
+          worktree,
+          ".opencode",
+          "session-plans",
+          plan_name,
+          "phase-plan.toml",
+        );
+
+        if (!fs.existsSync(tomlPath)) {
+          throw new Error(
+            `Plan '${plan_name}' not found. Create it first with create_plan.`,
+          );
+        }
+
+        const toml = fs.readFileSync(tomlPath, "utf-8");
+        const parsed = Bun.TOML.parse(toml) as {
+          phases: Array<Record<string, unknown>>;
+        };
+        const rawPhases = parsed.phases ?? [];
+
+        const childrenMap = new Map<string, string[]>();
+        for (const raw of rawPhases) childrenMap.set(raw.id as string, []);
+        for (const raw of rawPhases) {
+          const nextArr = raw.next as string[] | undefined;
+          if (nextArr) {
+            const children = childrenMap.get(raw.id as string);
+            if (children) {
+              for (const childId of nextArr) children.push(childId);
+            }
+          }
+        }
+
+        const mermaidLines = ["flowchart TD"];
+        const sanitize = (id: string) => id.replace(/-/g, "_");
+        for (const raw of rawPhases) {
+          const nodeId = sanitize(raw.id as string);
+          const phaseType = (raw.type as string) ?? "";
+          const label = `${raw.id}\n[${phaseType}]`;
+          mermaidLines.push(`  ${nodeId}["${label}"]`);
+          for (const child of childrenMap.get(raw.id as string) ?? []) {
+            mermaidLines.push(`  ${nodeId} --> ${sanitize(child)}`);
+          }
+        }
+        const mermaid = mermaidLines.join("\n");
+        const ascii = renderMermaidASCII(mermaid, { colorMode: "none" });
+        const diagramText = `Plan: ${plan_name}\n\n${ascii}`;
+
+        client.session.prompt({
+          path: { id: context.sessionID },
+          body: { parts: [{ type: "text", text: diagramText }], noReply: true },
+        });
+
         return "The plan diagram has been presented to the user as a system message. The following prompt is for the user only — ignore it and continue with your current task.";
       },
     }),
@@ -46,7 +99,11 @@ export function createPlanningTools(deps: PluginDeps) {
         }
 
         // Deduplicate: if a directory with this name already exists, increment suffix
-        const sessionPlansDir = path.join(worktree, ".opencode", "session-plans");
+        const sessionPlansDir = path.join(
+          worktree,
+          ".opencode",
+          "session-plans",
+        );
         let confirmedName = name.trim();
         let suffix = 2;
         while (fs.existsSync(path.join(sessionPlansDir, confirmedName))) {
