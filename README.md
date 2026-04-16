@@ -115,7 +115,7 @@ ocx oc -p naga-ollama
 ```bash
 llama-server \
   -hf unsloth/gemma-4-E4B-it-GGUF:Q8_0 \
-  --temp 0.2 \
+  --temp 0.8 \
   --top-p 0.95 \
   --top-k 64 \
   --alias opencode-model \
