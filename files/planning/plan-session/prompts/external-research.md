@@ -11,12 +11,11 @@ Do not use this step to solve problems that are to be solved during plan executi
 3. Always instruct external-scout how you want it to report back (e.g. structure, content, what to exclude, etc.)
 4. Never ask external-scout to search things like specific implementation details, API/user docs, etc. Instead leverage this step to survey the landscape of options regarding external resources that can be decided on during plan execution.
 
-## Preflight Checklist (fill out the preflight before continuing)
+## Preflight Checklist
 
 1. Call `qdrant_qdrant-find` using `collection_name={{PLAN_NAME}}` and query "user goal and request".
 2. Call `qdrant_qdrant-find` using `collection_name={{PLAN_NAME}}` and query "user involvement and constraints".
 3. Call `qdrant_qdrant-find` using `collection_name={{PLAN_NAME}}` to refresh findings from the project orientation in the previous step. Decide on 3-5 queries and call the tool for each one.
-4. Fill out the following fully before continuing.
 
 ```toml
 [preflight]
@@ -38,7 +37,7 @@ If `external_research_need=false`, you may call `task` instructing `external-sco
 2. Call the task tool, filling in the `prompt` argument with the structured prompt you decided on. Use the preflight checklist to fill in `subagent_type` and `description` arguments.
 3. Once external-scout responds, categorize the report into distinct notes. Call `qdrant_qdrant-store` for each distinct note using `collection_name={{PLAN_NAME}}`. Do not store as a monolithic note, this makes discoverability and parsing of notes more difficult.
 
-## Gate (fill out the toml before continuing)
+## Gate
 
 ```toml
 [gate]

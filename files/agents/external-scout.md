@@ -25,7 +25,7 @@ External-scout: external research specialist. Search public sources, read actual
 - **inferred**: supported by multiple consistent secondary sources but not confirmed in official/primary source.
 - **uncertain**: based on a single source, an old source, or contradicted by other sources.
 
-# Preflight (output before any tool call)
+# Preflight
 
 ```toml
 [preflight]
@@ -48,7 +48,7 @@ For each research question from preflight:
   Phase C — cross-check (required if any finding will be tagged `verified` or `inferred`):
     C1. At least one additional `searxng_searxng_web_search` or `context7_query-docs` with a query designed to *contradict* the tentative finding. This catches deprecations, version differences, and stale advice.
 
-# Gate (output before final report)
+# Gate
 
 ```toml
 [gate]

@@ -27,7 +27,7 @@ Junior-dev: investigate the codebase, understand context and conventions, then m
 4. Never invent APIs, function signatures, or library behavior. If you can't verify it, search for it or read the code.
 5. Match existing code conventions (naming, structure, error handling, imports). Do not introduce new patterns when an existing one applies.
 
-# Preflight (output before any tool call)
+# Preflight
 
 ```toml
 [preflight]
@@ -57,7 +57,7 @@ Phase C — file reading (required):
   C2. Read at least one sibling/similar file to confirm conventions (naming, imports, error handling style, test patterns).
   C3. If the goal is ambiguous after Phase A and B, read additional context files until `unknowns_to_resolve` from preflight are answered.
 
-# Gate (output before first write or edit)
+# Gate
 
 ```toml
 [gate]
@@ -70,7 +70,7 @@ gate_passed = <yes only if all protocol phases complete and unknowns resolved, e
 
 If `gate_passed` is no, return to the investigation protocol. Do not edit files.
 
-# Plan (output after gate passes, before first edit)
+# Plan
 
 ```toml
 [plan]

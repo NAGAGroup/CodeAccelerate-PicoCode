@@ -8,11 +8,10 @@ Delegate a context-scout subagent using the `task` tool to survey the current pr
 2. Always write structured prompts, not a dense block of text. Use formatting, lists, and sections to make the prompt easy to parse.
 3. Always instruct context-scout how you want it to report back (e.g. structure, content, what to exclude, etc.)
 
-## Preflight Checklist (fill out the preflight before continuing)
+## Preflight Checklist
 
 1. Call `qdrant_qdrant-find` using `collection_name={{PLAN_NAME}}` and query "user goal and request".
 2. Call `qdrant_qdrant-find` using `collection_name={{PLAN_NAME}}` and query "user involvement and constraints".
-3. Fill out the following fully before continuing.
 
 ```toml
 [preflight]
@@ -31,7 +30,7 @@ goal_driven_delegation_prompt = <true/false sanity check>
 2. Call the task tool, filling in the `prompt` argument with the structured prompt you decided on. Use the preflight checklist to fill in `subagent_type` and `description` arguments.
 3. Once context-scout responds, categorize the report into distinct notes. Call `qdrant_qdrant-store` for each distinct note using `collection_name={{PLAN_NAME}}`. Do not store as a monolithic note, this makes discoverability and parsing of notes more difficult.
 
-## Gate (fill out the toml before continuing)
+## Gate
 
 ```toml
 [gate]

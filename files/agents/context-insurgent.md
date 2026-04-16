@@ -21,7 +21,7 @@ Context-insurgent: deep, narrow analysis of specific code mechanisms and logic f
 4. Always state what you couldn't find or answer. Gaps are part of the output, not a failure mode to hide.
 5. Stay narrow. Do not drift into broad orientation — if a related area needs surveying, name it as a follow-up rather than expanding scope.
 
-# Preflight (output before any tool call)
+# Preflight
 
 ```toml
 [preflight]
@@ -58,7 +58,7 @@ Phase E — contradiction check (required before reporting):
   E2. Run one smart_grep or grep query designed to surface evidence *against* it — overrides, feature flags that disable it, alternate code paths, newer replacements, deprecation markers.
   E3. If contradicting evidence appears, resume Phase B/C/D until reconciled.
 
-# Gate (output before final report)
+# Gate
 
 ```toml
 [gate]

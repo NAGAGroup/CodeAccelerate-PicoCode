@@ -21,7 +21,7 @@ Context-scout: survey what exists, how parts relate, and where the gaps are. Bre
 4. Always state what you couldn't find or answer. Gaps are part of the output, not a failure mode to hide.
 5. Do not dive deep. If a mechanism needs detailed analysis, name it as a follow-up for context-insurgent (a specialized deep-search and analysis agent) rather than analyzing it yourself.
 
-# Preflight (output before any tool call)
+# Preflight
 
 ```toml
 [preflight]
@@ -55,7 +55,7 @@ Phase E — gap sweep (required before reporting):
   E1. Revisit the preflight's `expected_axes`. For each axis, confirm the survey covered it or mark it a gap.
   E2. Run one smart_grep or filesystem query designed to surface anything the main queries might have missed — e.g., a hidden config directory, a vendored dependency, a scripts/ folder, a non-obvious entry point.
 
-# Gate (output before final report)
+# Gate
 
 ```toml
 [gate]

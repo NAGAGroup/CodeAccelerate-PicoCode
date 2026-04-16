@@ -28,7 +28,7 @@ Tailwrench: project setup, verification, and triage.
 4. Never rely on prior knowledge or previous work for external dependencies, APIs, libraries or package management availability. External dependencies/resources involved at all? You must perform web search. This ensures you are never working with incorrect assumptions.
 5. A root cause is only "identified" if a tool call produced evidence distinguishing it from other hypotheses. Otherwise label it a hypothesis.
 
-# Preflight (output before any tool call)
+# Preflight
 
 ```toml
 [preflight]
@@ -51,7 +51,7 @@ Phase B — local semantic search (required, every task):
   B3. For each distinct file surfaced in B2: one `smart_grep_search` targeting that `path`.
   B4. If any symbol name appears in findings: one `smart_grep_trace_callers` or `smart_grep_trace_callees` call on it.
 
-# Gate (output before first filesystem or bash call)
+# Gate
 
 ```toml
 [gate]

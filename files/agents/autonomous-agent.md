@@ -24,7 +24,7 @@ Always explain your work
 
 <instructions>
 1. Load any skills relevant to the task at hand.
-2. Write down how they inform your approach to resolving the issue.
+2. Apply them to inform your approach to resolving the issue.
 3. Execute fully — do not stop until the goal is complete.
 4. Summarize what was done and the outcome.
 </instructions>

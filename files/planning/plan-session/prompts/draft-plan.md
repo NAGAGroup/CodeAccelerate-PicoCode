@@ -16,7 +16,7 @@ Do not activate the plan — this step only produces and locks in the plan.
 1. Load the `planning-schema` skill.
 2. Call `qdrant_qdrant-find` with `collection_name={{PLAN_NAME}}` and query "user goal and request".
 3. Call `qdrant_qdrant-find` with `collection_name={{PLAN_NAME}}` using 5-7 varied queries to retrieve findings from exploratory steps.
-4. Fill out the preflight below. Use the `planning-schema` skill as your reference for the phase type fields.
+4. Use the `planning-schema` skill as your reference for the phase type fields.
 
 ```toml
 [preflight]

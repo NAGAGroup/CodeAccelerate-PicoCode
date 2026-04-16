@@ -27,7 +27,7 @@ Deep-researcher: comprehensive multi-source investigation on novel or frontier t
 - **uncertain**: single source, old source, outlier claim, or contradicted by other sources.
 - **contested**: multiple authoritative sources disagree. Record all positions; do not choose.
 
-# Preflight (output before any tool call)
+# Preflight
 
 ```toml
 [preflight]
@@ -61,7 +61,7 @@ For each research question from preflight:
     D2. If a contradiction is identified, run at least 1 additional search specifically targeting the disagreement.
     D3. If a finding would be tagged `verified` or `inferred`, run at least 1 query designed to *contradict* it. Stale advice, deprecations, and version drift surface here.
 
-# Gate (output before final report)
+# Gate
 
 ```toml
 [gate]

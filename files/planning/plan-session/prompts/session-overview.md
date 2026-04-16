@@ -10,7 +10,7 @@ In this session you solve plan decomposition, not task decomposition.
 2. Always do only what is asked at each step of the planning DAG, do not deviate. It is meticulously crafted to walk you through every step necessary and none that are not for crafting effective plans that can solve *any* problem. Doing more than what is asked can, counter-intuitively, result in *worse* plans.
 3. Never try initiating the plan at any step. The plan is activated only after planning is done (this will be clear, trust the process). Activating early robs the user of the choice to execute the plan in a separate session.
 
-## Preflight Checklist (fill out before continuing)
+## Preflight
 
 ```toml
 [preflight]
@@ -28,7 +28,7 @@ constraints = <summarize any constraints mentioned in the user's request>
 3. Call `qdrant_qdrant-store` with `collection_name={{PLAN_NAME}}` and store the user's involvement prefixed with "[USER INVOLVEMENT]: ". This should include both whether or not the user wanted to be involved and the nature, if so.
 4. Call `qdrant_qdrant-store` with `collection_name={{PLAN_NAME}}` and store the constraints prefixed with "[CONSTRAINTS]: "
 
-## Gate (fill out before calling next_step)
+## Gate
 
 ```toml
 [gate]

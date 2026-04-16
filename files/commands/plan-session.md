@@ -12,7 +12,7 @@ You are starting a planning session. The user's request is:
 1. Load the following-plans skill before doing anything else.
 2. Do not attempt to solve the user's request. This session decomposes it into a plan, it does not execute it.
 
-## Preflight (fill out before continuing)
+## Preflight
 
 ```toml
 [preflight]
@@ -27,7 +27,7 @@ constraints = <any constraints, exclusions, or scope limits mentioned in the req
 1. Load the `following-plans` skill.
 2. Complete the preflight above.
 
-## Gate (fill out before calling plan_session)
+## Gate
 
 ```toml
 [gate]
