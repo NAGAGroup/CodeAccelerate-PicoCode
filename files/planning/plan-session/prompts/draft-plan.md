@@ -16,7 +16,7 @@ Do not activate the plan — this step only produces and locks in the plan.
 1. Load the `planning-schema` skill.
 2. Call `qdrant_qdrant-find` with `collection_name={{PLAN_NAME}}` and query "user goal and request".
 3. Call `qdrant_qdrant-find` with `collection_name={{PLAN_NAME}}` using 5-7 varied queries to retrieve findings from exploratory steps.
-4. Use the `planning-schema` skill as your reference for the phase type fields.
+4. Use the `planning-schema` skill as your reference for the phase type fields. Phase types can be used multiple times. Nested branching is allowed. Branches need not merge, every leaf phase is considered a valid exit.
 
 ```toml
 [preflight]
@@ -35,10 +35,11 @@ If `collaboration_signal = "unclear"`, use the `question` tool now to resolve it
 
 ## Part 1: Identify Work and Decisions
 
-Identify two things together, because they shape each other:
+Identify these things together, because they shape each other:
 
-- **Work items** — distinct implementation tasks. Keep each tightly scoped. Every work phase touching external dependencies must have `web-search-questions`.
-- **Decisions** — things that must be decided during execution. For each decision, note who decides (agent or user) and whether the decision changes *what* gets implemented downstream.
+- **Decisions/Discussion** — things that must be decided during execution. For each decision, note who decides (agent or user) and whether the decision changes *what* gets implemented downstream.
+- **Work items** — distinct implementation tasks, don't cram a ton of work into a single phase. Keep each tightly scoped. Every work phase touching external dependencies must have `web-search-questions` and the instructions fields should explicitly state that external dependencies are involved and that subagents should perform their own web searches as they work to ensure the work being done is correct.
+- **Verification** — how will work be verified? This includes success criteria and any specific visual checks, verification commands, checking against external resources via web search, etc.
 
 A decision that changes what gets implemented → a gate that branches into distinct pathways.
 A decision that only affects details of a work item → no branching; handle with `write-notes` or `user-discussion`.
@@ -46,6 +47,7 @@ A decision that only affects details of a work item → no branching; handle wit
 ```toml
 [work-decisions-gate]
 work_items = <list: each item's scope in one line>
+verification_instructions = <list: each item's verification method in one line, matching the order of work_items>
 branching_decisions = <list: which decisions branch the DAG, gate type, and what the branches are — "none" if none>
 non_branching_decisions = <list: which decisions are handled in-line with write-notes or user-discussion — "none" if none>
 collaboration_phases = <list: user-discussion and user-decision-gate phases planned, based on collaboration_signal — "none" if autonomous>
@@ -74,6 +76,7 @@ single_entry_point = <true/false — exactly one phase has no phase pointing to 
 all_phases_have_next_field = <true/false>
 only_gates_have_multi_next = <true/false>
 every_work_phase_with_external_deps_has_web_search_questions = <true/false>
+every_work_instruction_includes_explicit_web_search_as_you_work_verbiage = <true/false, e.g. "Subagents must be told to perform web search as they work since external dependencies are involved.">
 every_work_phase_has_internal_research_and_setup_fields_populated = <true/false>
 every_branching_decision_from_part_1_appears_as_a_gate = <true/false>
 every_early_exit_from_part_2_appears_as_a_leaf = <true/false>
@@ -86,3 +89,4 @@ gate_passed = <true/false — all above are true>
 Once `draft-gate.gate_passed = true`, call `create_plan` with `plan_name={{PLAN_NAME}}` and the full TOML plan. On errors, read them and retry.
 
 Once `create_plan` succeeds, call `next_step` immediately.
+

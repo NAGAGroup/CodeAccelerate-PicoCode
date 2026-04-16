@@ -8,7 +8,15 @@
 1. Write your prompt as instructions *to* deep-researcher — treat it as a message to another agent.
 2. Call the `task` tool with `subagent_type=deep-researcher`.
 
-## Prepare Delegation
+## Preflight Checks
+
+```
+[preflight]
+subagent_type = deep-researcher
+description = <3-5 word description of the task>
+```
+
+## Prepare Delegation Protocol
 
 1. Call `qdrant_qdrant-find` with `collection_name={{PLAN_NAME}}` using 3-5 varied queries to retrieve what is already known about this topic and why deep research was flagged as necessary.
 2. Draft a prompt for deep-researcher that includes: the research topic, prior context to build on, project constraints, and reporting requirements — deep-researcher must always surface contradictions and confidence levels.

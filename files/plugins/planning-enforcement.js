@@ -104200,7 +104200,7 @@ function createSessionTools(deps) {
         const state = readState(statePath);
         if (!state)
           return "Failed to activate plan session.";
-        return `DAG "${state.dag_id}" activated. Your next task, "${state.current_node}", will be presented in the following message.`;
+        return `Planning session has begun. Wait for your next step.`;
       }
     }),
     activate_plan: tool({
@@ -104214,7 +104214,7 @@ function createSessionTools(deps) {
         const state = readState(statePath);
         if (!state)
           return `Failed to activate plan "${plan_name}".`;
-        return `DAG "${state.dag_id}" activated. Your next task, "${state.current_node}", will be presented in the following message.`;
+        return `Plan execution has begun. Wait for your next step.`;
       }
     })
   };
@@ -104562,24 +104562,15 @@ function validatePhaseOptions(phase_type, opts) {
         throw new Error(`Invalid value for 'research-type': '${opts["research-type"]}'. Expected: standard | deep.`);
       }
       break;
-    case "deep-project-search-and-analysis":
-      require2("questions", "string[]");
-      break;
-    case "project-survey":
-      require2("topics", "string[]");
-      break;
     case "work":
-      require2("goal", "string");
+      require2("work-instructions", "string");
       require2("work-type", "string");
-      require2("verify-description", "string");
+      require2("verification-instructions", "string");
       require2("project-survey-topics", "string[]");
       require2("deep-search-questions", "string[]");
       if (!["code", "docs"].includes(opts["work-type"])) {
         throw new Error(`Invalid value for 'work-type': '${opts["work-type"]}'. Expected: code | docs.`);
       }
-      break;
-    case "project-setup":
-      require2("goals", "string[]");
       break;
     case "user-discussion":
       require2("topic", "string");
@@ -104638,7 +104629,12 @@ function loadNodeSpec(componentType) {
 }
 function makeNode(id, componentType, inject, children = []) {
   const { enforcement, promptPath } = loadNodeSpec(componentType);
-  const node = { id, prompt: promptPath, enforcement, component: componentType };
+  const node = {
+    id,
+    prompt: promptPath,
+    enforcement,
+    component: componentType
+  };
   if (Object.keys(inject).length > 0)
     node.inject = inject;
   if (children.length > 0)
@@ -104654,9 +104650,11 @@ function expandExternalResearch(phase) {
   const researchType = phase.phase_options["research-type"] ?? "standard";
   const component = researchType === "deep" ? "deep-research" : "external-scout";
   const nodeId = `${phase.phase}`;
-  const node = makeNode(nodeId, component, { DESCRIPTION: `Running external research for the following questions:
+  const node = makeNode(nodeId, component, {
+    DESCRIPTION: `Running external research for the following questions:
 
-${bullets(questions)}` }, [EXIT]);
+${bullets(questions)}`
+  }, [EXIT]);
   return {
     entryNodeId: nodeId,
     nodes: [node],
@@ -104668,12 +104666,16 @@ function expandInternalResearch(phase) {
   const scoutId = `${phase.phase}-scout`;
   const insurgentId = `${phase.phase}-insurgent`;
   const nodes = [
-    makeNode(scoutId, "context-scout", { DESCRIPTION: `Surveying the following topics:
+    makeNode(scoutId, "context-scout", {
+      DESCRIPTION: `Surveying the following topics:
 
-${bullets(questions)}` }, [insurgentId]),
-    makeNode(insurgentId, "context-insurgent", { DESCRIPTION: `Investigating the following questions:
+${bullets(questions)}`
+    }, [insurgentId]),
+    makeNode(insurgentId, "context-insurgent", {
+      DESCRIPTION: `Investigating the following questions:
 
-${bullets(questions)}` }, [EXIT])
+${bullets(questions)}`
+    }, [EXIT])
   ];
   return {
     entryNodeId: scoutId,
@@ -104694,9 +104696,9 @@ ${bullets(topics)}` }, [EXIT]);
   };
 }
 function expandWork(phase) {
-  const goal = phase.phase_options.goal;
+  const goal = phase.phase_options["work-instructions"];
   const workType = phase.phase_options["work-type"];
-  const verifyDescription = phase.phase_options["verify-description"];
+  const verifyDescription = phase.phase_options["verification-instructions"];
   const retries = 5;
   const commit = phase.phase_options.commit ?? false;
   const workComponent = workType === "docs" ? "documentation-expert-work-item" : "junior-dev-work-item";
@@ -104704,36 +104706,44 @@ function expandWork(phase) {
   const surveyTopics = phase.phase_options["project-survey-topics"] ?? [];
   const externalQuestions = phase.phase_options["web-search-questions"] ?? [];
   const internalQuestions = phase.phase_options["deep-search-questions"] ?? [];
-  const setupGoals = phase.phase_options["pre-work-project-setup"] ?? [];
+  const setupGoals = phase.phase_options["pre-work-project-setup-instructions"] ?? [];
   const nodes = [];
   const exitSlots = [];
   const preWorkIds = [];
   if (surveyTopics.length > 0) {
     const id = `${phase.phase}-survey`;
-    nodes.push(makeNode(id, "context-scout", { DESCRIPTION: `Surveying the following topics:
+    nodes.push(makeNode(id, "context-scout", {
+      DESCRIPTION: `Surveying the following topics:
 
-${bullets(surveyTopics)}` }, []));
+${bullets(surveyTopics)}`
+    }, []));
     preWorkIds.push(id);
   }
   if (externalQuestions.length > 0) {
     const id = `${phase.phase}-ext`;
-    nodes.push(makeNode(id, "external-scout", { DESCRIPTION: `Running external research for the following questions:
+    nodes.push(makeNode(id, "external-scout", {
+      DESCRIPTION: `Running external research for the following questions:
 
-${bullets(externalQuestions)}` }, []));
+${bullets(externalQuestions)}`
+    }, []));
     preWorkIds.push(id);
   }
   if (internalQuestions.length > 0) {
     const id = `${phase.phase}-internal`;
-    nodes.push(makeNode(id, "context-insurgent", { DESCRIPTION: `Investigating the following questions:
+    nodes.push(makeNode(id, "context-insurgent", {
+      DESCRIPTION: `Investigating the following questions:
 
-${bullets(internalQuestions)}` }, []));
+${bullets(internalQuestions)}`
+    }, []));
     preWorkIds.push(id);
   }
   if (setupGoals.length > 0) {
     const id = `${phase.phase}-presetup`;
-    nodes.push(makeNode(id, "project-setup", { DESCRIPTION: `Running the following setup steps:
+    nodes.push(makeNode(id, "project-setup", {
+      DESCRIPTION: `Running the following setup steps:
 
-${bullets(setupGoals)}` }, []));
+${bullets(setupGoals)}`
+    }, []));
     preWorkIds.push(id);
   }
   const workId = `${phase.phase}-work`;
@@ -104781,9 +104791,13 @@ function expandProjectCommands(phase) {
   const goals = phase.phase_options.goals;
   const commit = phase.phase_options.commit ?? false;
   const nodeId = `${phase.phase}`;
-  const nodes = [makeNode(nodeId, "project-setup", { DESCRIPTION: `Running the following setup steps:
+  const nodes = [
+    makeNode(nodeId, "project-setup", {
+      DESCRIPTION: `Running the following setup steps:
 
-${bullets(goals)}` }, [EXIT])];
+${bullets(goals)}`
+    }, [EXIT])
+  ];
   if (commit) {
     const commitId = `${phase.phase}-commit`;
     nodes[0].children = [commitId];
@@ -105359,6 +105373,7 @@ async function handlePlanSessionBefore(input, _output, deps) {
     state.status = hasNext ? "waiting_step" : "complete";
     writeState(statePath, state);
   }
+  await new Promise((resolve2) => setTimeout(resolve2, 1000));
   return true;
 }
 
@@ -105394,6 +105409,7 @@ async function handleActivatePlanBefore(input, output, deps) {
     state.status = entryNode.children && entryNode.children.length > 0 ? "waiting_step" : "complete";
     writeState(statePath, state);
   }
+  await new Promise((resolve2) => setTimeout(resolve2, 1000));
   return true;
 }
 
@@ -105449,6 +105465,7 @@ async function handleNextStepBefore(input, output, deps) {
   const nextNode = state.node_map[nextId];
   if (!nextNode)
     throw new Error(`Next node "${nextId}" not found in DAG`);
+  await new Promise((resolve2) => setTimeout(resolve2, 1000));
   return true;
 }
 
@@ -111328,10 +111345,16 @@ async function handlePlanSessionAfter(input, _output, deps) {
   const promptText = readPrompt(entryNode.prompt, worktree, sessionPath, {
     planning_session_id: state.planning_session_id
   });
-  deps.client.session.prompt({
-    path: { id: input.sessionID },
-    body: { parts: [{ type: "text", text: promptText }] }
-  });
+  const deferredPromptInjection = async (_input = input, _deferredDeps = deps, _promptText = promptText) => {
+    await new Promise((resolve2) => {
+      setTimeout(resolve2, 2000);
+    });
+    _deferredDeps.client.session.prompt({
+      path: { id: _input.sessionID },
+      body: { parts: [{ type: "text", text: _promptText }] }
+    });
+  };
+  deferredPromptInjection();
   return true;
 }
 
@@ -111352,10 +111375,16 @@ async function handleActivatePlanAfter(input, _output, deps) {
     plan_name: state.plan_name,
     inject: entryNode.inject
   });
-  deps.client.session.prompt({
-    path: { id: input.sessionID },
-    body: { parts: [{ type: "text", text: promptText }] }
-  });
+  const deferredPromptInjection = async (_input = input, _deferredDeps = deps, _promptText = promptText) => {
+    await new Promise((resolve2) => {
+      setTimeout(resolve2, 2000);
+    });
+    _deferredDeps.client.session.prompt({
+      path: { id: _input.sessionID },
+      body: { parts: [{ type: "text", text: _promptText }] }
+    });
+  };
+  deferredPromptInjection();
   return true;
 }
 
@@ -111382,10 +111411,16 @@ async function handleNextStepAfter(input, _output, deps) {
     planning_session_id: state.planning_session_id,
     inject: currentNode.inject
   });
-  deps.client.session.prompt({
-    path: { id: input.sessionID },
-    body: { parts: [{ type: "text", text: promptText }] }
-  });
+  const deferredPromptInjection = async (_input = input, _deferredDeps = deps, _promptText = promptText) => {
+    await new Promise((resolve2) => {
+      setTimeout(resolve2, 2000);
+    });
+    _deferredDeps.client.session.prompt({
+      path: { id: _input.sessionID },
+      body: { parts: [{ type: "text", text: _promptText }] }
+    });
+  };
+  deferredPromptInjection();
   return true;
 }
 

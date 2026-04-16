@@ -16,7 +16,10 @@ export async function handleActivatePlanBefore(
 
   const worktree = deps.resolveWorktree(deps.pluginCtx);
   ensureGrepai(worktree);
-  const { compiledPlanPath, metadata, nodeMap } = recompilePlan(plan_name, worktree);
+  const { compiledPlanPath, metadata, nodeMap } = recompilePlan(
+    plan_name,
+    worktree,
+  );
 
   const entryNode = nodeMap[metadata.entry_node_id];
   if (!entryNode) {
@@ -47,6 +50,9 @@ export async function handleActivatePlanBefore(
         : "complete";
     writeState(statePath, state);
   }
+
+  // 1000ms sleep
+  await new Promise((resolve) => setTimeout(resolve, 1000));
 
   return true;
 }

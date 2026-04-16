@@ -49,16 +49,10 @@ export function validatePhaseOptions(
         );
       }
       break;
-    case "deep-project-search-and-analysis":
-      require("questions", "string[]");
-      break;
-    case "project-survey":
-      require("topics", "string[]");
-      break;
     case "work":
-      require("goal", "string");
+      require("work-instructions", "string");
       require("work-type", "string");
-      require("verify-description", "string");
+      require("verification-instructions", "string");
       require("project-survey-topics", "string[]");
       require("deep-search-questions", "string[]");
       if (!["code", "docs"].includes(opts["work-type"] as string)) {
@@ -66,9 +60,6 @@ export function validatePhaseOptions(
           `Invalid value for 'work-type': '${opts["work-type"]}'. Expected: code | docs.`,
         );
       }
-      break;
-    case "project-setup":
-      require("goals", "string[]");
       break;
     case "user-discussion":
       require("topic", "string");

@@ -17,7 +17,7 @@ export function createSessionTools(deps: PluginDeps) {
         const statePath = dagStatePath(worktree, context.sessionID);
         const state = readState(statePath);
         if (!state) return "Failed to activate plan session.";
-        return `DAG "${state.dag_id}" activated. Your next task, "${state.current_node}", will be presented in the following message.`;
+        return `Planning session has begun. Wait for your next step.`;
       },
     }),
 
@@ -31,7 +31,7 @@ export function createSessionTools(deps: PluginDeps) {
         const statePath = dagStatePath(worktree, context.sessionID);
         const state = readState(statePath);
         if (!state) return `Failed to activate plan "${plan_name}".`;
-        return `DAG "${state.dag_id}" activated. Your next task, "${state.current_node}", will be presented in the following message.`;
+        return `Plan execution has begun. Wait for your next step.`;
       },
     }),
   };

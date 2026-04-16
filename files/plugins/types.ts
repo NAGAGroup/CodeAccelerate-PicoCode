@@ -2,10 +2,7 @@
 
 export type PhaseType =
   | "web-search"
-  | "deep-project-search-and-analysis"
-  | "project-survey"
   | "work"
-  | "project-setup"
   | "user-discussion"
   | "user-decision-gate"
   | "agentic-decision-gate"
@@ -18,10 +15,10 @@ export const BRANCHING_PHASE_TYPES = new Set<PhaseType>([
 ]);
 
 export interface PhaseRecord {
-  phase: string;        // descriptive phase ID, e.g. "2a-implement-auth"
+  phase: string; // descriptive phase ID, e.g. "2a-implement-auth"
   phase_type: PhaseType;
   phase_options: Record<string, unknown>;
-  children: string[];   // child phase IDs — length 0 = terminal, length 1 = sequential, length N = branching
+  children: string[]; // child phase IDs — length 0 = terminal, length 1 = sequential, length N = branching
 }
 
 export interface PhaseDagMetadata {
@@ -72,6 +69,6 @@ export interface DagSessionState {
   updated_at: string;
   decisions: DecisionEntry[];
   node_map: Record<string, FlatNode>;
-  plan_name?: string;           // set by choose_plan_name; substituted into {{PLAN_NAME}}
+  plan_name?: string; // set by choose_plan_name; substituted into {{PLAN_NAME}}
   planning_session_id?: string; // set by plan_session; substituted into {{PLANNING_SESSION_ID}}
 }

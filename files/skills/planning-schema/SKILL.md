@@ -3,6 +3,16 @@ name: planning-schema
 description: Phase types, field schemas, and naming conventions for writing executable plans in TOML format.
 ---
 
+## web-search
+Researches external sources. Informs discussion and decision gates. This phase type does *not* satisfy pre-work web search. It is strictly for informing discussion and decisions.
+```toml
+[[phases]]
+id = <phase-id>           # unique descriptive identifier (required)
+type = "web-search"       # phase type (required)
+next = [<child-id>]       # next phase ids (required) -- use [] for leaf/exit phases
+questions = ["...", ...]  # research questions (required)
+```
+
 ## user-discussion
 Engages the user in open-ended discussion. Linear — no branching.
 ```toml
@@ -13,38 +23,8 @@ next = [<child-id>]       # next phase ids (required) -- use [] for leaf/exit ph
 topic = "..."             # discussion topic or goal (required)
 ```
 
-## project-survey
-Broadly surveys the codebase to understand structure, conventions, and relevant areas.
-```toml
-[[phases]]
-id = <phase-id>           # unique descriptive identifier (required)
-type = "project-survey"   # phase type (required)
-next = [<child-id>]       # next phase ids (required) -- use [] for leaf/exit phases
-topics = ["...", ...]     # survey topics (required)
-```
-
-## web-search
-Researches external sources to answer specific questions before work begins.
-```toml
-[[phases]]
-id = <phase-id>           # unique descriptive identifier (required)
-type = "web-search"       # phase type (required)
-next = [<child-id>]       # next phase ids (required) -- use [] for leaf/exit phases
-questions = ["...", ...]  # research questions (required)
-```
-
-## deep-project-search-and-analysis
-Investigates the codebase to answer specific questions before work begins.
-```toml
-[[phases]]
-id = <phase-id>                            # unique descriptive identifier (required)
-type = "deep-project-search-and-analysis"  # phase type (required)
-next = [<child-id>]                        # next phase ids (required) -- use [] for leaf/exit phases
-questions = ["...", ...]                   # research questions (required)
-```
-
 ## user-decision-gate
-Asks the user to choose between branches.
+Alternative to `user-discussion`. Use instead of `user-discussion` when branching is necessary.
 ```toml
 [[phases]]
 id = <phase-id>                         # unique descriptive identifier (required)
@@ -63,31 +43,26 @@ next = [<branch-a>, <branch-b>, ...]    # branch phase ids (required) -- must ha
 question = "..."                        # decision question for the executor to answer from evidence (required)
 ```
 
-## project-setup
-Runs shell operations and edits config or build system files.
-```toml
-[[phases]]
-id = <phase-id>           # unique descriptive identifier (required)
-type = "project-setup"    # phase type (required)
-next = [<child-id>]       # next phase ids (required) -- use [] for leaf/exit phases
-goals = ["...", ...]      # setup goals (required)
-commit = false            # commit after setup (optional) -- default false
-```
-
 ## work
-Researches, implements, and verifies a goal. Includes automatic retries on failure.
+Researches, implements, and verifies a goal. Includes automatic retries on failure. Provide comprehensive instructions for both work and verification. *Always* include references to pre-work steps in the `*-instructions` fields, this helps provide continuity between steps.
+
+This is especially relevant when working with external dependencies/resources as it gives tailwrench, junior-dev and documentation-expert subagents delegated at these steps the required context to perform their own web searches in addition to the pre-work web research if needed. The instructions should include:
+
+- external dependencies involved
+- web searches that tailwrench/junior-dev/documentation-expert should perform as they work, in addition to the pre-work web research (never assume that the orchestrating agent will provide this info on their own)
+
 ```toml
 [[phases]]
 id = <phase-id>                            # unique descriptive identifier (required)
 type = "work"                              # phase type (required)
 next = [<child-id>]                        # next phase ids (required) -- use [] for leaf/exit phases
 work-type = "code"                         # implementation type (required) -- "code" or "docs"
-project-survey-topics = ["...", ...]       # codebase areas to survey before work (required)
-deep-search-questions = ["...", ...]  # codebase questions to answer before work (required)
-web-search-questions = ["...", ...]   # web research questions to answer before work (optional) -- required if work involves external dependencies
-pre-work-project-setup = ["...", ...]      # setup to run before work (optional) -- delegates to tailwrench to setup dependencies, scaffolding, env config
-goal = "..."                               # what to implement (required) -- implementation goal, this is what gets delegated to junior-dev or documentation-expert
-verify-description = "..."                 # success criteria (required) -- ensures the work was completed successfully via tailwrench, includes compilation, running tests, visual checks, etc.
+project-survey-topics = ["...", ...]       # codebase areas to survey as a high-level overview before work (required)
+web-search-questions = ["...", ...]   # work-related web research, e.g. user docs, APIs, etc. (optional) -- required for every work phase if work involves external dependencies
+deep-search-questions = ["...", ...]  # codebase search and analysis before work (required)
+pre-work-project-setup-instructions = ["...", ...]   # project setup instructions to complete before work (optional) -- required if project setup is necessary for the work phase, include references to web research and codebase search as needed
+work-instructions = "..."    # detailed instructions for completing the work (required) -- include references to project survey, web research, codebase search, and project setup
+verification-instructions = "..."                 # success criteria (required) -- ensures the work was completed successfully via tailwrench, includes compilation, checking against external resources, running tests, visual checks, etc.
 commit = false                             # commit after successful verify (optional) -- default false
 ```
 

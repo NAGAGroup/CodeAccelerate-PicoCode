@@ -9,7 +9,15 @@
 2. Call the `task` tool with `subagent_type=tailwrench`.
 3. Tailwrench can only run shell commands and edit config and build system files — never source code or documentation.
 
-## Prepare Delegation
+## Preflight Checks
+
+```
+[preflight]
+subagent_type = tailwrench
+description = <3-5 word description of the task>
+```
+
+## Prepare Delegation Protocol
 
 1. Call `qdrant_qdrant-find` with `collection_name={{PLAN_NAME}}` using 3-5 varied queries to retrieve any environment constraints, known dependency versions, or prior failed attempts that affect how these steps should run.
 2. Draft a prompt for tailwrench that includes: the setup steps to execute, any relevant constraints from context retrieval, what tailwrench can and cannot touch, and what to report back per step.

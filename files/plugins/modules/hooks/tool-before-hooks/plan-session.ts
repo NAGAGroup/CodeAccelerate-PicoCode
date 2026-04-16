@@ -22,11 +22,13 @@ export async function handlePlanSessionBefore(
   const plan_name = `plan-session-${input.sessionID}`;
   const promptsPrefix = `.opencode/session-plans/${plan_name}/prompts/`;
   for (const node of nodes) {
-    if (!node.prompt.includes("/")) node.prompt = `${promptsPrefix}${node.prompt}`;
+    if (!node.prompt.includes("/"))
+      node.prompt = `${promptsPrefix}${node.prompt}`;
   }
   const nodeMap = flattenTreeV3(metadata, nodes);
   const entryNode = nodeMap[metadata.entry_node_id];
-  if (!entryNode) throw new Error(`Entry node "${metadata.entry_node_id}" not found in DAG`);
+  if (!entryNode)
+    throw new Error(`Entry node "${metadata.entry_node_id}" not found in DAG`);
 
   const statePath = dagStatePath(worktree, input.sessionID);
   const state: DagSessionState = {
@@ -48,6 +50,9 @@ export async function handlePlanSessionBefore(
     state.status = hasNext ? "waiting_step" : "complete";
     writeState(statePath, state);
   }
+  //
+  // 1000ms sleep
+  await new Promise((resolve) => setTimeout(resolve, 1000));
 
   return true;
 }

@@ -75,5 +75,8 @@ export async function handleNextStepBefore(
   const nextNode = state.node_map[nextId];
   if (!nextNode) throw new Error(`Next node "${nextId}" not found in DAG`);
 
+  // 1000ms sleep
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+
   return true;
 }

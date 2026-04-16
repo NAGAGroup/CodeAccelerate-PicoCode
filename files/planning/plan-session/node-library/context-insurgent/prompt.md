@@ -9,15 +9,15 @@
 2. Call the `task` tool with `subagent_type=context-insurgent`.
 3. Context-insurgent only has access to project source files — do not ask it to search the web or reference external knowledge.
 
-## Preflight
+## Preflight Checks
 
-```toml
+```
 [preflight]
-topics_and_questions = <translate the goals in {{DESCRIPTION}} into a list of specific questions and symbols to investigate>
-planned_queries = <3-5 varied plain-language queries to include in your prompt to context-insurgent>
+subagent_type = context-insurgent
+description = <3-5 word description of the task>
 ```
 
-## Prepare Delegation
+## Prepare Delegation Protocol
 
 1. Call `qdrant_qdrant-find` with `collection_name={{PLAN_NAME}}` using 5-7 varied queries to retrieve prior survey findings, planning context, and anything that scopes or motivates this analysis.
 2. Draft a prompt for context-insurgent that includes: the specific questions to answer, any prior findings context-insurgent should build on (not re-derive), and clear reporting requirements.

@@ -9,15 +9,15 @@
 2. Call the `task` tool with `subagent_type=context-scout`.
 3. Context-scout only has access to project source files — do not ask it to search the web or reference external knowledge.
 
-## Preflight
+## Preflight Checks
 
-```toml
+```
 [preflight]
-survey_goals = <translate the topics in {{DESCRIPTION}} into a concrete list of what to survey>
-planned_queries = <3-5 varied plain-language queries to include in your prompt to context-scout>
+subagent_type = context-scout
+description = <3-5 word description of the task>
 ```
 
-## Prepare Delegation
+## Prepare Delegation Protocol
 
 1. Call `qdrant_qdrant-find` with `collection_name={{PLAN_NAME}}` using 3-5 varied queries to retrieve any prior findings or planning context that should inform what context-scout focuses on.
 2. Draft a prompt for context-scout that includes: the survey goals from preflight, any retrieved context that scopes or prioritizes the survey, and clear reporting requirements.
