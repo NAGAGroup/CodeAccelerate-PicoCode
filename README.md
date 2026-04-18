@@ -1,17 +1,17 @@
-# CodeAccelerate-PicoCode
+# CodeAccelerate-ZeptoCode
 [![Demo](https://img.shields.io/badge/Watch_Demo-YouTube-red?style=flat-square&logo=youtube)](https://youtu.be/s7YQCgxsuO4)
 
 > Autonomous multi-agent planning and execution for [OpenCode](https://opencode.ai) — running entirely on a 4-billion parameter model.
 
-You describe a goal. PicoCode plans it, executes it, and ships it — locally, privately, with no cloud APIs required.
+You describe a goal. ZeptoCode plans it, executes it, and ships it — locally, privately, with no cloud APIs required.
 
 ---
 
-## What makes PicoCode different
+## What makes ZeptoCode different
 
 **Agents build their own execution plans as structured DAGs — not flat task lists, not free-form reasoning chains.**
 
-PicoCode uses a two-level planning system. A small, modular set of plan "phase types" (research, implement, decide, verify, exit) serves as the authoring vocabulary. A planning agent composes these phases into a typed execution DAG — with branches for decision-making, early exits for dead ends, merge points where paths converge, and user interaction gates where human judgment is needed. That DAG then compiles down to individual node prompts that specialist agents execute step by step.
+ZeptoCode uses a two-level planning system. A small, modular set of plan "phase types" (research, implement, decide, verify, exit) serves as the authoring vocabulary. A planning agent composes these phases into a typed execution DAG — with branches for decision-making, early exits for dead ends, merge points where paths converge, and user interaction gates where human judgment is needed. That DAG then compiles down to individual node prompts that specialist agents execute step by step.
 
 This matters because:
 
@@ -29,7 +29,7 @@ The whole system runs on [gemma4:4be](https://ollama.com/library/gemma4) via Oll
 /plan-session build a C++ ASCII art library that prints to stdout
 ```
 
-PicoCode will:
+ZeptoCode will:
 
 1. **Survey** your codebase to understand structure and conventions
 2. **Research** external dependencies, frameworks, and integration approaches
@@ -92,7 +92,7 @@ docker run -d --name searxng -p 8080:8080 searxng/searxng
 ollama pull gemma4:4be
 ```
 
-### 2. Install PicoCode
+### 2. Install ZeptoCode
 
 ```bash
 npx ocx init --global
@@ -107,7 +107,7 @@ npx ocx add --global naga-group/ocx-planning-plugin
 grepai version
 ```
 
-PicoCode manages grepai automatically per project — no manual init or watch commands needed. The first session on a new project takes slightly longer while the index builds.
+ZeptoCode manages grepai automatically per project — no manual init or watch commands needed. The first session on a new project takes slightly longer while the index builds.
 
 ---
 
@@ -180,7 +180,7 @@ Execution runs through the DAG automatically. Each phase dispatches the appropri
 cd your-project && rm -rf .grepai/
 ```
 
-PicoCode rebuilds the index automatically on the next session. Per-session index isolation is being investigated.
+ZeptoCode rebuilds the index automatically on the next session. Per-session index isolation is being investigated.
 
 ---
 
@@ -194,4 +194,4 @@ Full E2E planning and execution on gemma4:4be — planning, delegation, verifica
 
 ## Part of CodeAccelerate
 
-PicoCode is part of the [CodeAccelerate](https://github.com/nagagroup) collection — tools, libraries, and configurations published by NagaGroup.
+ZeptoCode is part of the [CodeAccelerate](https://github.com/nagagroup) collection — tools, libraries, and configurations published by NagaGroup.
