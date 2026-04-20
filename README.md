@@ -133,7 +133,7 @@ ocx oc -p naga-ollama
 ```bash
 llama-server \
   -hf unsloth/gemma-4-E4B-it-GGUF:Q8_0 \
-  --temp 0.8 --top-p 0.95 --top-k 64 \
+  --temp 0.2 --top-p 0.95 --top-k 64 \  # The low temperature ensures tools are called and the DAG is followed exactly as stated. Larger models can probably be bumped to 1.0
   --alias opencode-model \
   --port 8000 \
   --reasoning on
