@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
 import type { PhaseRecord } from "../../types";
-import { VALID_PHASE_TYPES, BRANCHING_PHASE_TYPE_SET, validatePhaseOptions } from "./phase-validation";
+import { validatePhaseOptions, getValidPhaseTypeSet } from "./phase-validation";
 import { compilePhasesToNodes } from "../../phase-expander";
 import { writeDagV3 } from "../../dag-io";
 import { flattenTreeV3 } from "../../dag-tree";
@@ -52,9 +52,10 @@ export function compilePlan(
     if (phaseIds.has(id)) throw new Error(`Duplicate phase id: '${id}'.`);
     phaseIds.add(id);
 
-    if (!VALID_PHASE_TYPES.has(phase_type)) {
+    const validPhaseTypes = getValidPhaseTypeSet();
+    if (!validPhaseTypes.has(phase_type)) {
       throw new Error(
-        `Phase '${id}': invalid type '${phase_type}'. Valid types: ${[...VALID_PHASE_TYPES].join(", ")}.`,
+        `Phase '${id}': invalid type '${phase_type}'. Valid types: ${[...validPhaseTypes].join(", ")}.`,
       );
     }
 
@@ -115,20 +116,17 @@ export function compilePlan(
 
   // Validate branching constraints
   for (const phase of phaseList) {
-    if (
-      BRANCHING_PHASE_TYPE_SET.has(phase.phase_type) &&
-      phase.children.length < 2
-    ) {
+    // A phase is branching if its schema declares is-branch and the author set it to true.
+    // BRANCHING_PHASE_TYPE_SET remains empty — branching is per-instance, not per-type.
+    const isBranching = phase.phase_options["is-branch"] === true || phase.phase_options["is-branch"] === "true";
+    if (isBranching && phase.children.length < 2) {
       throw new Error(
-        `Phase '${phase.phase}' (${phase.phase_type}) must have at least 2 child phases. Found ${phase.children.length}.`,
+        `Phase '${phase.phase}' (${phase.phase_type}) has is-branch = true but only ${phase.children.length} child phase(s). Branching phases must have at least 2 entries in next.`,
       );
     }
-    if (
-      !BRANCHING_PHASE_TYPE_SET.has(phase.phase_type) &&
-      phase.children.length > 1
-    ) {
+    if (!isBranching && phase.children.length > 1) {
       throw new Error(
-        `Phase '${phase.phase}' (${phase.phase_type}) cannot have multiple children. Only agentic-decision-gate and user-decision-gate may branch.`,
+        `Phase '${phase.phase}' (${phase.phase_type}) cannot have multiple children. Set is-branch = true to allow branching.`,
       );
     }
   }

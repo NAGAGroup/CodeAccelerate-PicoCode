@@ -1,0 +1,25 @@
+[fields]
+
+[fields.planning-context]
+type = "list"
+required = false
+
+[fields.project-survey-instructions]
+type = "list"
+required = false
+
+[fields.web-search-instructions]
+type = "list"
+required = false
+
+[fields.project-analysis-instructions]
+type = "list"
+required = false
+
+[fields.authoring-instructions]
+type = "list"
+required = true
+
+[fields.constraints]
+type = "list"
+required = false

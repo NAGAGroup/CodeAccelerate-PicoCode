@@ -104300,365 +104300,196 @@ function flattenTreeV3(metadata, nodes) {
 import * as fs6 from "fs";
 import * as path6 from "path";
 
-// modules/dag_engine/phase-validation.ts
-var VALID_PHASE_TYPES = new Set([
-  "web-search",
-  "implement-code",
-  "author-documentation",
-  "user-discussion",
-  "user-decision-gate",
-  "agentic-decision-gate",
-  "write-notes",
-  "early-exit"
-]);
-var BRANCHING_PHASE_TYPE_SET = new Set([
-  "agentic-decision-gate",
-  "user-decision-gate"
-]);
-function validatePhaseOptions(phase_type, opts) {
-  const require2 = (field, expectedType) => {
-    if (!(field in opts) || opts[field] === null || opts[field] === undefined) {
-      throw new Error(`Phase type '${phase_type}' requires '${field}' in phase_options.`);
-    }
-    if (expectedType === "string" && typeof opts[field] !== "string") {
-      throw new Error(`'${field}' must be a string.`);
-    }
-    if (expectedType === "string[]" && !Array.isArray(opts[field])) {
-      throw new Error(`'${field}' must be an array of strings.`);
-    }
-  };
-  switch (phase_type) {
-    case "web-search":
-      require2("questions", "string[]");
-      if (opts["research-type"] && !["standard", "deep"].includes(opts["research-type"])) {
-        throw new Error(`Invalid value for 'research-type': '${opts["research-type"]}'. Expected: standard | deep.`);
-      }
-      break;
-    case "implement-code":
-      require2("work-instructions", "string");
-      require2("verification-instructions", "string");
-      break;
-    case "author-documentation":
-      require2("goal", "string");
-      break;
-    case "user-discussion":
-      require2("topic", "string");
-      break;
-    case "user-decision-gate":
-      require2("question", "string");
-      break;
-    case "agentic-decision-gate":
-      require2("question", "string");
-      break;
-    case "write-notes":
-    case "early-exit":
-      break;
-  }
-}
-
 // phase-expander.ts
 import * as fs5 from "fs";
 import * as path5 from "path";
-var EXIT = "__EXIT__";
-function nodeLibPath(componentType) {
-  return path5.join(CONFIG_ROOT, "planning", "plan-session", "node-library", componentType);
+var EXIT = "EXIT";
+function nodeLibPath(phaseType, componentType) {
+  return path5.join(CONFIG_ROOT, "planning", "plan-session", "node-library", phaseType, componentType);
 }
-var specCache = new Map;
-function loadNodeSpec(componentType) {
-  if (specCache.has(componentType))
-    return specCache.get(componentType);
-  const dir = nodeLibPath(componentType);
+function phaseLibPath(phaseType) {
+  return path5.join(CONFIG_ROOT, "planning", "plan-session", "node-library", phaseType);
+}
+function getAvailablePhaseTypes() {
+  const nodeLibRoot = path5.join(CONFIG_ROOT, "planning", "plan-session", "node-library");
+  return fs5.readdirSync(nodeLibRoot, { withFileTypes: true }).filter((d) => d.isDirectory()).map((d) => d.name);
+}
+function getValidPhaseTypes() {
+  return getAvailablePhaseTypes().filter((t) => t !== "entry-phase");
+}
+var schemaCache = new Map;
+function loadPhaseSchema(phaseType) {
+  if (schemaCache.has(phaseType))
+    return schemaCache.get(phaseType);
+  const schemaPath = path5.join(phaseLibPath(phaseType), "phase-schema.toml");
+  if (!fs5.existsSync(schemaPath)) {
+    return { fields: {} };
+  }
+  const parsed = Bun.TOML.parse(fs5.readFileSync(schemaPath, "utf-8"));
+  const schema = { fields: {} };
+  for (const [name, def] of Object.entries(parsed.fields ?? {})) {
+    const d = def;
+    schema.fields[name] = {
+      type: d.type === "list" ? "list" : "scalar",
+      required: d.required === true
+    };
+  }
+  schemaCache.set(phaseType, schema);
+  return schema;
+}
+var nodeSpecCache = new Map;
+function loadNodeSpec(phaseType, componentType) {
+  const cacheKey = `${phaseType}/${componentType}`;
+  if (nodeSpecCache.has(cacheKey))
+    return nodeSpecCache.get(cacheKey);
+  const dir = nodeLibPath(phaseType, componentType);
   const specPath = path5.join(dir, "node-spec.json");
   const promptPath = path5.join(dir, "prompt.md");
   if (!fs5.existsSync(specPath)) {
-    throw new Error(`Node spec not found for component "${componentType}" at ${specPath}`);
+    throw new Error(`Node spec not found for "${phaseType}/${componentType}" at ${specPath}`);
   }
   const spec = JSON.parse(fs5.readFileSync(specPath, "utf-8"));
   const result = { enforcement: spec.enforcement, promptPath };
-  specCache.set(componentType, result);
+  nodeSpecCache.set(cacheKey, result);
   return result;
 }
-function makeNode(id, componentType, inject, children = []) {
-  const { enforcement, promptPath } = loadNodeSpec(componentType);
-  const node = {
-    id,
-    prompt: promptPath,
-    enforcement,
-    component: componentType
-  };
-  if (Object.keys(inject).length > 0)
-    node.inject = inject;
-  if (children.length > 0)
-    node.children = children;
-  return node;
+var phaseSpecCache = new Map;
+function loadPhaseSpec(phaseType) {
+  if (phaseSpecCache.has(phaseType))
+    return phaseSpecCache.get(phaseType);
+  const specPath = path5.join(phaseLibPath(phaseType), "phase-spec.jsonl");
+  if (!fs5.existsSync(specPath)) {
+    throw new Error(`Phase spec not found for type "${phaseType}" at ${specPath}`);
+  }
+  const lines = fs5.readFileSync(specPath, "utf-8").split(`
+`).filter((l) => l.trim());
+  const nodes = lines.map((line) => JSON.parse(line));
+  phaseSpecCache.set(phaseType, nodes);
+  return nodes;
+}
+function toInjectKey(fieldName) {
+  return fieldName.toUpperCase().replace(/-/g, "_");
 }
 function bullets(items) {
   return items.map((q) => `- ${q}`).join(`
 `);
 }
-function expandExternalResearch(phase) {
-  const questions = phase.phase_options.questions;
-  const researchType = phase.phase_options["research-type"] ?? "standard";
-  const component = researchType === "deep" ? "deep-research" : "external-scout";
-  const nodeId = `${phase.phase}`;
-  const node = makeNode(nodeId, component, {
-    DESCRIPTION: `Running external research for the following questions:
-
-${bullets(questions)}`
-  }, [EXIT]);
-  return {
-    entryNodeId: nodeId,
-    nodes: [node],
-    exitSlots: [{ nodeId, childIndex: 0 }]
-  };
-}
-function expandImplementCode(phase) {
-  const goal = phase.phase_options["work-instructions"];
-  const verifyDescription = phase.phase_options["verification-instructions"];
-  const retries = 5;
-  const commit = phase.phase_options.commit ?? false;
-  const surveyTopics = phase.phase_options["project-survey-topics"] ?? [];
-  const externalQuestions = phase.phase_options["web-search-questions"] ?? [];
-  const internalQuestions = phase.phase_options["deep-search-questions"] ?? [];
-  const setupGoals = phase.phase_options["pre-work-project-setup-instructions"] ?? [];
-  const nodes = [];
-  const exitSlots = [];
-  const preWorkIds = [];
-  if (surveyTopics.length > 0) {
-    const id = `${phase.phase}-survey`;
-    nodes.push(makeNode(id, "context-scout", {
-      DESCRIPTION: `Surveying the following topics:
-
-${bullets(surveyTopics)}`
-    }, []));
-    preWorkIds.push(id);
-  }
-  if (externalQuestions.length > 0) {
-    const id = `${phase.phase}-ext`;
-    nodes.push(makeNode(id, "external-scout", {
-      DESCRIPTION: `Running external research for the following questions:
-
-${bullets(externalQuestions)}`
-    }, []));
-    preWorkIds.push(id);
-  }
-  if (internalQuestions.length > 0) {
-    const id = `${phase.phase}-internal`;
-    nodes.push(makeNode(id, "context-insurgent", {
-      DESCRIPTION: `Investigating the following questions:
-
-${bullets(internalQuestions)}`
-    }, []));
-    preWorkIds.push(id);
-  }
-  if (setupGoals.length > 0) {
-    const id = `${phase.phase}-presetup`;
-    nodes.push(makeNode(id, "project-setup", {
-      DESCRIPTION: `Running the following setup steps:
-
-${bullets(setupGoals)}`
-    }, []));
-    preWorkIds.push(id);
-  }
-  const workId = `${phase.phase}-work`;
-  const fullInject = { GOAL: goal, VERIFY_DESCRIPTION: verifyDescription };
-  const failId = `${phase.phase}-failed`;
-  for (let i = 0;i < preWorkIds.length; i++) {
-    const nextId = i < preWorkIds.length - 1 ? preWorkIds[i + 1] : workId;
-    nodes.find((n) => n.id === preWorkIds[i]).children = [nextId];
-  }
-  const entryNodeId = preWorkIds.length > 0 ? preWorkIds[0] : workId;
-  const verify0Id = `${phase.phase}-verify-0`;
-  nodes.push(makeNode(workId, "junior-dev-work-item", { GOAL: goal }, [verify0Id]));
-  for (let r = 0;r < retries; r++) {
-    const verifyId = `${phase.phase}-verify-${r}`;
-    const triageId = `${phase.phase}-triage-${r + 1}`;
-    const nextVerifyId = `${phase.phase}-verify-${r + 1}`;
-    nodes.push(makeNode(verifyId, "verify-work-item", fullInject, [EXIT, triageId]));
-    exitSlots.push({ nodeId: verifyId, childIndex: 0 });
-    nodes.push(makeNode(triageId, "junior-dev-triage", fullInject, [nextVerifyId]));
-  }
-  const finalVerifyId = `${phase.phase}-verify-${retries}`;
-  nodes.push(makeNode(finalVerifyId, "verify-work-item", fullInject, [EXIT, failId]));
-  exitSlots.push({ nodeId: finalVerifyId, childIndex: 0 });
-  nodes.push(makeNode(failId, "write-notes", {
-    DESCRIPTION: `All triage attempts for "${phase.phase}" were exhausted without passing verification. Document the final failure state: last error output, what was attempted across all cycles, and what a future session would need to resolve this.`
-  }, [EXIT]));
-  if (commit) {
-    const commitId = `${phase.phase}-commit`;
-    nodes.push(makeNode(commitId, "commit", {}, [EXIT]));
-    for (const slot of exitSlots) {
-      const node = nodes.find((n) => n.id === slot.nodeId);
-      node.children[slot.childIndex] = commitId;
+function buildInjectMap(phase) {
+  const inject = {};
+  inject["PHASE_ID"] = phase.phase;
+  inject["TYPE"] = phase.phase_type;
+  inject["NEXT"] = phase.children.length > 0 ? bullets(phase.children) : "";
+  const schema = loadPhaseSchema(phase.phase_type);
+  for (const [field, value] of Object.entries(phase.phase_options)) {
+    const key = toInjectKey(field);
+    const fieldDef = schema.fields[field];
+    const isList = fieldDef?.type === "list" || Array.isArray(value);
+    if (isList && Array.isArray(value)) {
+      inject[key] = bullets(value);
+    } else {
+      inject[key] = String(value ?? "");
     }
-    return {
-      entryNodeId,
-      nodes,
-      exitSlots: [{ nodeId: commitId, childIndex: 0 }]
-    };
   }
-  return { entryNodeId, nodes, exitSlots };
-}
-function expandAuthorDocumentation(phase) {
-  const goal = phase.phase_options.goal;
-  const commit = phase.phase_options.commit ?? false;
-  const nodeId = `${phase.phase}-doc`;
-  const nodes = [
-    makeNode(nodeId, "author-documentation", { GOAL: goal }, [EXIT])
-  ];
-  if (commit) {
-    const commitId = `${phase.phase}-commit`;
-    nodes[0].children = [commitId];
-    nodes.push(makeNode(commitId, "commit", {}, [EXIT]));
-    return {
-      entryNodeId: nodeId,
-      nodes,
-      exitSlots: [{ nodeId: commitId, childIndex: 0 }]
-    };
-  }
-  return {
-    entryNodeId: nodeId,
-    nodes,
-    exitSlots: [{ nodeId, childIndex: 0 }]
-  };
-}
-function expandUserDiscussion(phase) {
-  const topic = phase.phase_options.topic;
-  const discussionId = `${phase.phase}-discussion`;
-  const nodes = [];
-  nodes.push(makeNode(discussionId, "user-discussion", { DESCRIPTION: topic }, [EXIT]));
-  return {
-    entryNodeId: discussionId,
-    nodes,
-    exitSlots: [{ nodeId: discussionId, childIndex: 0 }]
-  };
-}
-function expandUserDecisionGate(phase) {
-  const question = phase.phase_options.question;
-  const gateId = `${phase.phase}-gate`;
-  const gateDesc = question;
-  const nodes = [];
-  const gateChildren = new Array(phase.children.length).fill(EXIT);
-  nodes.push(makeNode(gateId, "user-decision-gate", { DESCRIPTION: gateDesc }, gateChildren));
-  const branchMap = new Map;
-  phase.children.forEach((childId, i) => branchMap.set(childId, i));
-  return {
-    entryNodeId: gateId,
-    nodes,
-    exitSlots: [],
-    branchMap,
-    gateNodeId: gateId
-  };
-}
-function expandAgenticDecisionGate(phase) {
-  const question = phase.phase_options.question;
-  const gateId = `${phase.phase}-gate`;
-  const gateDesc = question;
-  const nodes = [];
-  const gateChildren = new Array(phase.children.length).fill(EXIT);
-  nodes.push(makeNode(gateId, "decision-gate", { DESCRIPTION: gateDesc }, gateChildren));
-  const branchMap = new Map;
-  phase.children.forEach((childId, i) => branchMap.set(childId, i));
-  return {
-    entryNodeId: gateId,
-    nodes,
-    exitSlots: [],
-    branchMap,
-    gateNodeId: gateId
-  };
-}
-function expandWriteNotes(phase) {
-  const context = phase.phase_options.context;
-  const noteId = `${phase.phase}-notes`;
-  const desc = context ?? "Document findings, decisions, and context for future reference.";
-  const node = makeNode(noteId, "write-notes", { DESCRIPTION: desc }, [EXIT]);
-  return {
-    entryNodeId: noteId,
-    nodes: [node],
-    exitSlots: [{ nodeId: noteId, childIndex: 0 }]
-  };
-}
-function expandEarlyExit(phase) {
-  const reason = phase.phase_options.reason;
-  const exitId = `${phase.phase}-exit`;
-  const desc = reason ?? "Early exit — document context, reasoning, and any follow-up work for future sessions.";
-  const node = makeNode(exitId, "write-notes", { DESCRIPTION: desc }, [EXIT]);
-  return {
-    entryNodeId: exitId,
-    nodes: [node],
-    exitSlots: [{ nodeId: exitId, childIndex: 0 }]
-  };
+  return inject;
 }
 function expandPhase(phase) {
-  switch (phase.phase_type) {
-    case "web-search":
-      return expandExternalResearch(phase);
-    case "implement-code":
-      return expandImplementCode(phase);
-    case "author-documentation":
-      return expandAuthorDocumentation(phase);
-    case "user-discussion":
-      return expandUserDiscussion(phase);
-    case "user-decision-gate":
-      return expandUserDecisionGate(phase);
-    case "agentic-decision-gate":
-      return expandAgenticDecisionGate(phase);
-    case "write-notes":
-      return expandWriteNotes(phase);
-    case "early-exit":
-      return expandEarlyExit(phase);
-    default:
-      throw new Error(`Unknown phase type: ${phase.phase_type}`);
+  const specNodes = loadPhaseSpec(phase.phase_type);
+  const injectMap = buildInjectMap(phase);
+  const resolve = (s) => s.replaceAll("{{PHASE_ID}}", phase.phase);
+  const isIncluded = (specNode) => {
+    if (specNode.conditions.length === 0)
+      return true;
+    return specNode.conditions.every((field) => {
+      const val = phase.phase_options[field];
+      if (val === undefined || val === null)
+        return false;
+      if (Array.isArray(val))
+        return val.length > 0;
+      return String(val).trim().length > 0;
+    });
+  };
+  const included = specNodes.filter(isIncluded);
+  const includedIds = new Set(included.map((n) => resolve(n.id)));
+  const nodes = [];
+  const exitSlots = [];
+  for (const specNode of included) {
+    const nodeId = resolve(specNode.id);
+    const { enforcement, promptPath } = loadNodeSpec(specNode.phase_type, specNode.component);
+    const resolvedChildren = specNode.children.map((child) => {
+      if (child === EXIT)
+        return EXIT;
+      let target = resolve(child);
+      if (!includedIds.has(target)) {
+        target = resolveSkipped(target, specNodes, includedIds, phase.phase, resolve);
+      }
+      return target;
+    });
+    const node = {
+      id: nodeId,
+      prompt: promptPath,
+      enforcement,
+      component: specNode.component
+    };
+    const nodeInject = Object.keys(specNode.inject).length > 0 ? { ...injectMap, ...specNode.inject } : injectMap;
+    if (Object.keys(nodeInject).length > 0)
+      node.inject = nodeInject;
+    if (resolvedChildren.length > 0) {
+      node.children = resolvedChildren;
+      resolvedChildren.forEach((child, i) => {
+        if (child === EXIT)
+          exitSlots.push({ nodeId, childIndex: i });
+      });
+    }
+    nodes.push(node);
   }
+  const entryNodeId = nodes.length > 0 ? nodes[0].id : "";
+  return { entryNodeId, nodes, exitSlots };
 }
-function makeAutoExitNote(phase) {
-  const noteId = `${phase.phase}-auto-exit`;
-  const desc = `Execution of phase "${phase.phase}" complete. Document what was accomplished, any deferred items, and context for future sessions.`;
-  return makeNode(noteId, "write-notes", { DESCRIPTION: desc });
+function resolveSkipped(targetId, specNodes, includedIds, _phaseId, resolve) {
+  const visited = new Set;
+  let current = targetId;
+  while (!includedIds.has(current)) {
+    if (visited.has(current))
+      return EXIT;
+    visited.add(current);
+    const specNode = specNodes.find((n) => resolve(n.id) === current);
+    if (!specNode)
+      return EXIT;
+    const firstChild = specNode.children[0];
+    if (!firstChild || firstChild === EXIT)
+      return EXIT;
+    current = resolve(firstChild);
+  }
+  return current;
 }
 function compilePhasesToNodes(planId, phases, entryPhaseId) {
+  const entryPhaseRecord = {
+    phase: "execution-kickoff",
+    phase_type: "entry-phase",
+    phase_options: {},
+    children: [entryPhaseId]
+  };
+  const allPhases = [entryPhaseRecord, ...phases];
   const expansions = new Map;
-  for (const phase of phases) {
+  for (const phase of allPhases) {
     expansions.set(phase.phase, expandPhase(phase));
   }
   const phaseMap = new Map;
-  for (const phase of phases)
+  for (const phase of allPhases)
     phaseMap.set(phase.phase, phase);
   const nodeMap = new Map;
   for (const [, exp] of expansions) {
     for (const node of exp.nodes)
       nodeMap.set(node.id, node);
   }
-  for (const phase of phases) {
+  for (const phase of allPhases) {
     const exp = expansions.get(phase.phase);
-    if (exp.branchMap && exp.gateNodeId) {
-      const gateNode = nodeMap.get(exp.gateNodeId);
-      for (const [childPhaseId, childIndex] of exp.branchMap) {
-        const childExp = expansions.get(childPhaseId);
-        if (!childExp)
-          throw new Error(`Phase "${childPhaseId}" not found during wiring`);
-        if (!gateNode.children)
-          gateNode.children = [];
-        gateNode.children[childIndex] = childExp.entryNodeId;
-      }
-    }
     if (exp.exitSlots.length === 0)
       continue;
     const childPhaseIds = phase.children ?? [];
-    if (childPhaseIds.length === 0) {
-      if (phase.phase_type !== "write-notes" && phase.phase_type !== "early-exit") {
-        const autoNote = makeAutoExitNote(phase);
-        nodeMap.set(autoNote.id, autoNote);
-        for (const slot of exp.exitSlots) {
-          const node = nodeMap.get(slot.nodeId);
-          if (!node.children)
-            node.children = [];
-          while (node.children.length <= slot.childIndex)
-            node.children.push(EXIT);
-          node.children[slot.childIndex] = autoNote.id;
-        }
-      }
-    } else if (childPhaseIds.length === 1) {
+    if (childPhaseIds.length === 0)
+      continue;
+    if (childPhaseIds.length === 1) {
       const childExp = expansions.get(childPhaseIds[0]);
       if (!childExp)
         throw new Error(`Phase "${childPhaseIds[0]}" not found during wiring`);
@@ -104671,21 +104502,24 @@ function compilePhasesToNodes(planId, phases, entryPhaseId) {
         node.children[slot.childIndex] = childExp.entryNodeId;
       }
     } else {
-      throw new Error(`Phase "${phase.phase}" (${phase.phase_type}) has ${childPhaseIds.length} children but is not a branching type`);
+      for (const slot of exp.exitSlots) {
+        const node = nodeMap.get(slot.nodeId);
+        if (!node.children)
+          node.children = [];
+        node.children.splice(slot.childIndex, 1);
+        const branchEntries = [];
+        for (const childPhaseId of childPhaseIds) {
+          const childExp = expansions.get(childPhaseId);
+          if (!childExp)
+            throw new Error(`Phase "${childPhaseId}" not found during wiring`);
+          branchEntries.push(childExp.entryNodeId);
+        }
+        node.children.splice(slot.childIndex, 0, ...branchEntries);
+      }
     }
   }
-  const kickoffSpec = loadNodeSpec("execution-kickoff");
-  const entryExp = expansions.get(entryPhaseId);
-  if (!entryExp)
-    throw new Error(`Entry phase "${entryPhaseId}" not found`);
-  const kickoff = {
-    id: "execution-kickoff",
-    prompt: kickoffSpec.promptPath,
-    enforcement: kickoffSpec.enforcement,
-    component: "execution-kickoff",
-    children: [entryExp.entryNodeId]
-  };
-  const allNodes = [kickoff, ...nodeMap.values()];
+  const kickoffExp = expansions.get("execution-kickoff");
+  const allNodes = [...nodeMap.values()];
   for (const node of allNodes) {
     if (node.children) {
       node.children = node.children.filter((c) => c !== EXIT);
@@ -104696,9 +104530,31 @@ function compilePhasesToNodes(planId, phases, entryPhaseId) {
   const metadata = {
     schema_version: "3.0",
     id: planId,
-    entry_node_id: "execution-kickoff"
+    entry_node_id: kickoffExp.entryNodeId
   };
   return { metadata, nodes: allNodes };
+}
+
+// modules/dag_engine/phase-validation.ts
+var BRANCHING_PHASE_TYPE_SET = new Set;
+function validatePhaseOptions(phase_type, opts) {
+  const schema = loadPhaseSchema(phase_type);
+  for (const [field, def] of Object.entries(schema.fields)) {
+    if (!def.required)
+      continue;
+    if (!(field in opts) || opts[field] === null || opts[field] === undefined) {
+      throw new Error(`Phase type '${phase_type}' requires '${field}' in phase_options.`);
+    }
+    if (def.type === "list" && !Array.isArray(opts[field])) {
+      throw new Error(`'${field}' must be an array of strings.`);
+    }
+    if (def.type === "scalar" && typeof opts[field] !== "string" && typeof opts[field] !== "boolean" && typeof opts[field] !== "number") {
+      throw new Error(`'${field}' must be a scalar value.`);
+    }
+  }
+}
+function getValidPhaseTypeSet() {
+  return new Set(getValidPhaseTypes());
 }
 
 // modules/dag_engine/compiler.ts
@@ -104728,8 +104584,9 @@ function compilePlan(plan_name, toml, worktree) {
     if (phaseIds.has(id))
       throw new Error(`Duplicate phase id: '${id}'.`);
     phaseIds.add(id);
-    if (!VALID_PHASE_TYPES.has(phase_type)) {
-      throw new Error(`Phase '${id}': invalid type '${phase_type}'. Valid types: ${[...VALID_PHASE_TYPES].join(", ")}.`);
+    const validPhaseTypes = getValidPhaseTypeSet();
+    if (!validPhaseTypes.has(phase_type)) {
+      throw new Error(`Phase '${id}': invalid type '${phase_type}'. Valid types: ${[...validPhaseTypes].join(", ")}.`);
     }
     const phase_options = {};
     for (const [k, v] of Object.entries(raw)) {
@@ -104772,11 +104629,12 @@ function compilePlan(plan_name, toml, worktree) {
   }
   const entryPhaseId = entryPhases[0].id;
   for (const phase of phaseList) {
-    if (BRANCHING_PHASE_TYPE_SET.has(phase.phase_type) && phase.children.length < 2) {
-      throw new Error(`Phase '${phase.phase}' (${phase.phase_type}) must have at least 2 child phases. Found ${phase.children.length}.`);
+    const isBranching = phase.phase_options["is-branch"] === true || phase.phase_options["is-branch"] === "true";
+    if (isBranching && phase.children.length < 2) {
+      throw new Error(`Phase '${phase.phase}' (${phase.phase_type}) has is-branch = true but only ${phase.children.length} child phase(s). Branching phases must have at least 2 entries in next.`);
     }
-    if (!BRANCHING_PHASE_TYPE_SET.has(phase.phase_type) && phase.children.length > 1) {
-      throw new Error(`Phase '${phase.phase}' (${phase.phase_type}) cannot have multiple children. Only agentic-decision-gate and user-decision-gate may branch.`);
+    if (!isBranching && phase.children.length > 1) {
+      throw new Error(`Phase '${phase.phase}' (${phase.phase_type}) cannot have multiple children. Set is-branch = true to allow branching.`);
     }
   }
   fs6.mkdirSync(planDir, { recursive: true });

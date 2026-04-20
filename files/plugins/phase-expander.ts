@@ -1,11 +1,12 @@
 /**
  * phase-expander.ts
  *
- * Compiles a phase-based plan (schema 4.0) into a flat node graph (schema 3.0)
- * that the existing execution engine can run unchanged.
+ * Generic declarative expander. Compiles a phase-based plan (schema 4.0) into
+ * a flat node graph (schema 3.0) by reading phase-spec.jsonl and
+ * phase-schema.toml from the node-library for each phase type.
  *
  * Two-pass process:
- *   Pass 1 — expandPhase(): expand each phase into internal nodes + track exit slots
+ *   Pass 1 — expandPhase(): load spec, build nodes, track exit slots
  *   Pass 2 — wire(): connect exit slots to the next phase's entry node
  */
 
@@ -14,407 +15,280 @@ import * as path from "path";
 import { CONFIG_ROOT } from "./constants";
 import type { PhaseRecord, DagNodeV3, DagMetadataV3 } from "./types";
 
-// Sentinel used in children[] to mark unresolved exit slots
-const EXIT = "__EXIT__";
+// Sentinel used in children[] to mark unresolved inter-phase exit slots
+const EXIT = "EXIT";
 
 // ─── Node library helpers ─────────────────────────────────────────────────────
 
-function nodeLibPath(componentType: string): string {
+export function nodeLibPath(phaseType: string, componentType: string): string {
   return path.join(
     CONFIG_ROOT,
     "planning",
     "plan-session",
     "node-library",
+    phaseType,
     componentType,
   );
 }
+
+function phaseLibPath(phaseType: string): string {
+  return path.join(
+    CONFIG_ROOT,
+    "planning",
+    "plan-session",
+    "node-library",
+    phaseType,
+  );
+}
+
+// ─── Phase type discovery ─────────────────────────────────────────────────────
+
+/** Returns all phase types available in the node-library (directory names). */
+export function getAvailablePhaseTypes(): string[] {
+  const nodeLibRoot = path.join(
+    CONFIG_ROOT,
+    "planning",
+    "plan-session",
+    "node-library",
+  );
+  return fs
+    .readdirSync(nodeLibRoot, { withFileTypes: true })
+    .filter((d) => d.isDirectory())
+    .map((d) => d.name);
+}
+
+/** Returns all user-authorable phase types (excludes entry-phase). */
+export function getValidPhaseTypes(): string[] {
+  return getAvailablePhaseTypes().filter((t) => t !== "entry-phase");
+}
+
+// ─── Phase schema loading ─────────────────────────────────────────────────────
+
+interface FieldSchema {
+  type: "scalar" | "list";
+  required: boolean;
+}
+
+interface PhaseSchema {
+  fields: Record<string, FieldSchema>;
+}
+
+const schemaCache = new Map<string, PhaseSchema>();
+
+export function loadPhaseSchema(phaseType: string): PhaseSchema {
+  if (schemaCache.has(phaseType)) return schemaCache.get(phaseType)!;
+  const schemaPath = path.join(phaseLibPath(phaseType), "phase-schema.toml");
+  if (!fs.existsSync(schemaPath)) {
+    return { fields: {} };
+  }
+  const parsed = Bun.TOML.parse(fs.readFileSync(schemaPath, "utf-8")) as any;
+  const schema: PhaseSchema = { fields: {} };
+  for (const [name, def] of Object.entries(parsed.fields ?? {})) {
+    const d = def as any;
+    schema.fields[name] = {
+      type: d.type === "list" ? "list" : "scalar",
+      required: d.required === true,
+    };
+  }
+  schemaCache.set(phaseType, schema);
+  return schema;
+}
+
+// ─── Node spec loading ────────────────────────────────────────────────────────
 
 interface NodeSpec {
   enforcement: string[];
   promptPath: string;
 }
 
-const specCache = new Map<string, NodeSpec>();
+const nodeSpecCache = new Map<string, NodeSpec>();
 
-function loadNodeSpec(componentType: string): NodeSpec {
-  if (specCache.has(componentType)) return specCache.get(componentType)!;
-  const dir = nodeLibPath(componentType);
+function loadNodeSpec(phaseType: string, componentType: string): NodeSpec {
+  const cacheKey = `${phaseType}/${componentType}`;
+  if (nodeSpecCache.has(cacheKey)) return nodeSpecCache.get(cacheKey)!;
+  const dir = nodeLibPath(phaseType, componentType);
   const specPath = path.join(dir, "node-spec.json");
   const promptPath = path.join(dir, "prompt.md");
   if (!fs.existsSync(specPath)) {
     throw new Error(
-      `Node spec not found for component "${componentType}" at ${specPath}`,
+      `Node spec not found for "${phaseType}/${componentType}" at ${specPath}`,
     );
   }
   const spec = JSON.parse(fs.readFileSync(specPath, "utf-8")) as {
     enforcement: string[];
   };
   const result = { enforcement: spec.enforcement, promptPath };
-  specCache.set(componentType, result);
+  nodeSpecCache.set(cacheKey, result);
   return result;
 }
 
-function makeNode(
-  id: string,
-  componentType: string,
-  inject: Record<string, string>,
-  children: string[] = [],
-): DagNodeV3 {
-  const { enforcement, promptPath } = loadNodeSpec(componentType);
-  const node: DagNodeV3 = {
-    id,
-    prompt: promptPath,
-    enforcement,
-    component: componentType,
-  };
-  if (Object.keys(inject).length > 0) node.inject = inject;
-  if (children.length > 0) node.children = children;
-  return node;
+// ─── Phase spec loading ───────────────────────────────────────────────────────
+
+interface PhaseSpecNode {
+  id: string;
+  phase_type: string;
+  component: string;
+  children: string[];
+  conditions: string[];
+  inject: Record<string, string>;
 }
 
-// ─── Phase expansion result ───────────────────────────────────────────────────
+const phaseSpecCache = new Map<string, PhaseSpecNode[]>();
 
-interface PhaseExpansion {
-  entryNodeId: string;
-  nodes: DagNodeV3[];
-  /** nodeId + childIndex pairs whose child is an unresolved EXIT slot (point to next phase entry or auto-exit) */
-  exitSlots: Array<{ nodeId: string; childIndex: number }>;
-  /** For branching phases: each child phase ID maps to the gate node childIndex to receive it */
-  branchMap?: Map<string, number>; // childPhaseId → index in gate.children
-  gateNodeId?: string;
+function loadPhaseSpec(phaseType: string): PhaseSpecNode[] {
+  if (phaseSpecCache.has(phaseType)) return phaseSpecCache.get(phaseType)!;
+  const specPath = path.join(phaseLibPath(phaseType), "phase-spec.jsonl");
+  if (!fs.existsSync(specPath)) {
+    throw new Error(`Phase spec not found for type "${phaseType}" at ${specPath}`);
+  }
+  const lines = fs.readFileSync(specPath, "utf-8").split("\n").filter((l) => l.trim());
+  const nodes = lines.map((line) => JSON.parse(line) as PhaseSpecNode);
+  phaseSpecCache.set(phaseType, nodes);
+  return nodes;
 }
 
-// ─── Individual phase expanders ───────────────────────────────────────────────
+// ─── Inject map construction ──────────────────────────────────────────────────
+
+function toInjectKey(fieldName: string): string {
+  return fieldName.toUpperCase().replace(/-/g, "_");
+}
 
 function bullets(items: string[]): string {
   return items.map((q) => `- ${q}`).join("\n");
 }
 
-function expandExternalResearch(phase: PhaseRecord): PhaseExpansion {
-  const questions = phase.phase_options.questions as string[];
-  const researchType =
-    (phase.phase_options["research-type"] as string) ?? "standard";
-  const component =
-    researchType === "deep" ? "deep-research" : "external-scout";
-  const nodeId = `${phase.phase}`;
-  const node = makeNode(
-    nodeId,
-    component,
-    {
-      DESCRIPTION: `Running external research for the following questions:\n\n${bullets(questions)}`,
-    },
-    [EXIT],
-  );
-  return {
-    entryNodeId: nodeId,
-    nodes: [node],
-    exitSlots: [{ nodeId, childIndex: 0 }],
-  };
+/**
+ * Builds the uniform inject map for all nodes in a phase expansion.
+ * Every TOML field is included: scalars as strings, lists as bullet points.
+ * The phase id, type, and next (children) are also injected.
+ */
+function buildInjectMap(phase: PhaseRecord): Record<string, string> {
+  const inject: Record<string, string> = {};
+
+  // Always-present structural fields
+  inject["PHASE_ID"] = phase.phase;
+  inject["TYPE"] = phase.phase_type;
+  inject["NEXT"] = phase.children.length > 0
+    ? bullets(phase.children)
+    : "";
+
+  // All phase_options fields
+  const schema = loadPhaseSchema(phase.phase_type);
+  for (const [field, value] of Object.entries(phase.phase_options)) {
+    const key = toInjectKey(field);
+    const fieldDef = schema.fields[field];
+    const isList = fieldDef?.type === "list" || Array.isArray(value);
+    if (isList && Array.isArray(value)) {
+      inject[key] = bullets(value as string[]);
+    } else {
+      inject[key] = String(value ?? "");
+    }
+  }
+
+  return inject;
 }
 
+// ─── Phase expansion ──────────────────────────────────────────────────────────
 
+interface PhaseExpansion {
+  entryNodeId: string;
+  nodes: DagNodeV3[];
+  exitSlots: Array<{ nodeId: string; childIndex: number }>;
+}
 
-function expandImplementCode(phase: PhaseRecord): PhaseExpansion {
-  const goal = phase.phase_options["work-instructions"] as string;
-  const verifyDescription = phase.phase_options[
-    "verification-instructions"
-  ] as string;
-  const retries = 5;
-  const commit = (phase.phase_options.commit as boolean) ?? false;
+function expandPhase(phase: PhaseRecord): PhaseExpansion {
+  const specNodes = loadPhaseSpec(phase.phase_type);
+  const injectMap = buildInjectMap(phase);
 
-  // Optional pre-work chain fields
-  const surveyTopics =
-    (phase.phase_options["project-survey-topics"] as string[]) ?? [];
-  const externalQuestions =
-    (phase.phase_options["web-search-questions"] as string[]) ?? [];
-  const internalQuestions =
-    (phase.phase_options["deep-search-questions"] as string[]) ?? [];
-  const setupGoals =
-    (phase.phase_options["pre-work-project-setup-instructions"] as string[]) ??
-    [];
+  // Resolve {{PHASE_ID}} in a string
+  const resolve = (s: string) => s.replaceAll("{{PHASE_ID}}", phase.phase);
+
+  // Evaluate conditions: all named fields must be non-empty in phase_options
+  const isIncluded = (specNode: PhaseSpecNode): boolean => {
+    if (specNode.conditions.length === 0) return true;
+    return specNode.conditions.every((field) => {
+      const val = phase.phase_options[field];
+      if (val === undefined || val === null) return false;
+      if (Array.isArray(val)) return val.length > 0;
+      return String(val).trim().length > 0;
+    });
+  };
+
+  // Determine which spec nodes are included after condition evaluation
+  const included = specNodes.filter(isIncluded);
+  const includedIds = new Set(included.map((n) => resolve(n.id)));
 
   const nodes: DagNodeV3[] = [];
   const exitSlots: Array<{ nodeId: string; childIndex: number }> = [];
 
-  // Build optional pre-work chain: survey → external → internal → setup
-  const preWorkIds: string[] = [];
+  for (const specNode of included) {
+    const nodeId = resolve(specNode.id);
+    const { enforcement, promptPath } = loadNodeSpec(specNode.phase_type, specNode.component);
 
-  if (surveyTopics.length > 0) {
-    const id = `${phase.phase}-survey`;
-    nodes.push(
-      makeNode(
-        id,
-        "context-scout",
-        {
-          DESCRIPTION: `Surveying the following topics:\n\n${bullets(surveyTopics)}`,
-        },
-        [],
-      ),
-    );
-    preWorkIds.push(id);
-  }
-  if (externalQuestions.length > 0) {
-    const id = `${phase.phase}-ext`;
-    nodes.push(
-      makeNode(
-        id,
-        "external-scout",
-        {
-          DESCRIPTION: `Running external research for the following questions:\n\n${bullets(externalQuestions)}`,
-        },
-        [],
-      ),
-    );
-    preWorkIds.push(id);
-  }
-  if (internalQuestions.length > 0) {
-    const id = `${phase.phase}-internal`;
-    nodes.push(
-      makeNode(
-        id,
-        "context-insurgent",
-        {
-          DESCRIPTION: `Investigating the following questions:\n\n${bullets(internalQuestions)}`,
-        },
-        [],
-      ),
-    );
-    preWorkIds.push(id);
-  }
-  if (setupGoals.length > 0) {
-    const id = `${phase.phase}-presetup`;
-    nodes.push(
-      makeNode(
-        id,
-        "project-setup",
-        {
-          DESCRIPTION: `Running the following setup steps:\n\n${bullets(setupGoals)}`,
-        },
-        [],
-      ),
-    );
-    preWorkIds.push(id);
-  }
+    // Resolve children: skip excluded intra-phase nodes by following the chain forward
+    const resolvedChildren = specNode.children.map((child) => {
+      if (child === EXIT) return EXIT;
+      let target = resolve(child);
+      // If target was excluded, walk forward through the spec until we find
+      // an included node or EXIT
+      if (!includedIds.has(target)) {
+        target = resolveSkipped(target, specNodes, includedIds, phase.phase, resolve);
+      }
+      return target;
+    });
 
-  const workId = `${phase.phase}-work`;
-  const fullInject = { GOAL: goal, VERIFY_DESCRIPTION: verifyDescription };
-  const failId = `${phase.phase}-failed`;
-
-  // Wire pre-work chain: each node → next, last → workId
-  for (let i = 0; i < preWorkIds.length; i++) {
-    const nextId = i < preWorkIds.length - 1 ? preWorkIds[i + 1] : workId;
-    nodes.find((n) => n.id === preWorkIds[i])!.children = [nextId];
-  }
-
-  const entryNodeId = preWorkIds.length > 0 ? preWorkIds[0] : workId;
-
-  // work-item: linear → verify-0 (no VERIFY_DESCRIPTION — verify node owns that)
-  const verify0Id = `${phase.phase}-verify-0`;
-  nodes.push(makeNode(workId, "junior-dev-work-item", { GOAL: goal }, [verify0Id]));
-
-  // Chain: verify-r → [success→EXIT, triage-r+1] → verify-r+1, for r = 0..retries-1
-  for (let r = 0; r < retries; r++) {
-    const verifyId = `${phase.phase}-verify-${r}`;
-    const triageId = `${phase.phase}-triage-${r + 1}`;
-    const nextVerifyId = `${phase.phase}-verify-${r + 1}`;
-
-    // verify-r: branches [success→EXIT, triage-r+1]
-    nodes.push(makeNode(verifyId, "verify-work-item", fullInject, [EXIT, triageId]));
-    exitSlots.push({ nodeId: verifyId, childIndex: 0 });
-
-    // triage-r+1: linear → verify-r+1
-    nodes.push(makeNode(triageId, "junior-dev-triage", fullInject, [nextVerifyId]));
-  }
-
-  // Final verify (verify-5): branches [success→EXIT, fail-exit]
-  const finalVerifyId = `${phase.phase}-verify-${retries}`;
-  nodes.push(makeNode(finalVerifyId, "verify-work-item", fullInject, [EXIT, failId]));
-  exitSlots.push({ nodeId: finalVerifyId, childIndex: 0 });
-
-  // Failure terminal — not in exitSlots so EXIT child sanitizes away → true terminal
-  nodes.push(
-    makeNode(
-      failId,
-      "write-notes",
-      {
-        DESCRIPTION: `All triage attempts for "${phase.phase}" were exhausted without passing verification. Document the final failure state: last error output, what was attempted across all cycles, and what a future session would need to resolve this.`,
-      },
-      [EXIT],
-    ),
-  );
-
-  // Optional commit node — redirect all success exit slots through it
-  if (commit) {
-    const commitId = `${phase.phase}-commit`;
-    nodes.push(makeNode(commitId, "commit", {}, [EXIT]));
-    for (const slot of exitSlots) {
-      const node = nodes.find((n) => n.id === slot.nodeId)!;
-      node.children![slot.childIndex] = commitId;
-    }
-    return {
-      entryNodeId,
-      nodes,
-      exitSlots: [{ nodeId: commitId, childIndex: 0 }],
+    const node: DagNodeV3 = {
+      id: nodeId,
+      prompt: promptPath,
+      enforcement,
+      component: specNode.component,
     };
+
+    // Merge spec inject (reserved for future per-node overrides) with phase inject
+    const nodeInject = Object.keys(specNode.inject).length > 0
+      ? { ...injectMap, ...specNode.inject }
+      : injectMap;
+
+    if (Object.keys(nodeInject).length > 0) node.inject = nodeInject;
+
+    if (resolvedChildren.length > 0) {
+      node.children = resolvedChildren;
+      resolvedChildren.forEach((child, i) => {
+        if (child === EXIT) exitSlots.push({ nodeId, childIndex: i });
+      });
+    }
+
+    nodes.push(node);
   }
 
+  const entryNodeId = nodes.length > 0 ? nodes[0].id : "";
   return { entryNodeId, nodes, exitSlots };
 }
 
-function expandAuthorDocumentation(phase: PhaseRecord): PhaseExpansion {
-  const goal = phase.phase_options.goal as string;
-  const commit = (phase.phase_options.commit as boolean) ?? false;
-  const nodeId = `${phase.phase}-doc`;
-  const nodes: DagNodeV3[] = [
-    makeNode(nodeId, "author-documentation", { GOAL: goal }, [EXIT]),
-  ];
-
-  if (commit) {
-    const commitId = `${phase.phase}-commit`;
-    nodes[0].children = [commitId];
-    nodes.push(makeNode(commitId, "commit", {}, [EXIT]));
-    return {
-      entryNodeId: nodeId,
-      nodes,
-      exitSlots: [{ nodeId: commitId, childIndex: 0 }],
-    };
+/**
+ * When a node was excluded by conditions, walk forward through the spec chain
+ * to find the next included node (or EXIT if none found).
+ */
+function resolveSkipped(
+  targetId: string,
+  specNodes: PhaseSpecNode[],
+  includedIds: Set<string>,
+  _phaseId: string,
+  resolve: (s: string) => string,
+): string {
+  // Find the excluded spec node and follow its first non-EXIT child
+  const visited = new Set<string>();
+  let current = targetId;
+  while (!includedIds.has(current)) {
+    if (visited.has(current)) return EXIT; // cycle guard
+    visited.add(current);
+    const specNode = specNodes.find((n) => resolve(n.id) === current);
+    if (!specNode) return EXIT;
+    const firstChild = specNode.children[0];
+    if (!firstChild || firstChild === EXIT) return EXIT;
+    current = resolve(firstChild);
   }
-
-  return {
-    entryNodeId: nodeId,
-    nodes,
-    exitSlots: [{ nodeId, childIndex: 0 }],
-  };
-}
-
-
-
-function expandUserDiscussion(phase: PhaseRecord): PhaseExpansion {
-  const topic = phase.phase_options.topic as string;
-  const discussionId = `${phase.phase}-discussion`;
-  const nodes: DagNodeV3[] = [];
-
-  nodes.push(
-    makeNode(discussionId, "user-discussion", { DESCRIPTION: topic }, [EXIT]),
-  );
-  return {
-    entryNodeId: discussionId,
-    nodes,
-    exitSlots: [{ nodeId: discussionId, childIndex: 0 }],
-  };
-}
-
-function expandUserDecisionGate(phase: PhaseRecord): PhaseExpansion {
-  const question = phase.phase_options.question as string;
-  const gateId = `${phase.phase}-gate`;
-  const gateDesc = question;
-  const nodes: DagNodeV3[] = [];
-
-  const gateChildren = new Array(phase.children.length).fill(EXIT);
-  nodes.push(
-    makeNode(
-      gateId,
-      "user-decision-gate",
-      { DESCRIPTION: gateDesc },
-      gateChildren,
-    ),
-  );
-
-  const branchMap = new Map<string, number>();
-  phase.children.forEach((childId, i) => branchMap.set(childId, i));
-
-  return {
-    entryNodeId: gateId,
-    nodes,
-    exitSlots: [],
-    branchMap,
-    gateNodeId: gateId,
-  };
-}
-
-function expandAgenticDecisionGate(phase: PhaseRecord): PhaseExpansion {
-  const question = phase.phase_options.question as string;
-  const gateId = `${phase.phase}-gate`;
-  const gateDesc = question;
-  const nodes: DagNodeV3[] = [];
-
-  // Gate children placeholders — one per branch child phase
-  const gateChildren = new Array(phase.children.length).fill(EXIT);
-  nodes.push(
-    makeNode(gateId, "decision-gate", { DESCRIPTION: gateDesc }, gateChildren),
-  );
-
-  const branchMap = new Map<string, number>();
-  phase.children.forEach((childId, i) => branchMap.set(childId, i));
-
-  return {
-    entryNodeId: gateId,
-    nodes,
-    exitSlots: [],
-    branchMap,
-    gateNodeId: gateId,
-  };
-}
-
-function expandWriteNotes(phase: PhaseRecord): PhaseExpansion {
-  const context = phase.phase_options.context as string | undefined;
-  const noteId = `${phase.phase}-notes`;
-  const desc =
-    context ??
-    "Document findings, decisions, and context for future reference.";
-  const node = makeNode(noteId, "write-notes", { DESCRIPTION: desc }, [EXIT]);
-  return {
-    entryNodeId: noteId,
-    nodes: [node],
-    exitSlots: [{ nodeId: noteId, childIndex: 0 }],
-  };
-}
-
-function expandEarlyExit(phase: PhaseRecord): PhaseExpansion {
-  const reason = phase.phase_options.reason as string | undefined;
-  const exitId = `${phase.phase}-exit`;
-  const desc =
-    reason ??
-    "Early exit — document context, reasoning, and any follow-up work for future sessions.";
-  const node = makeNode(exitId, "write-notes", { DESCRIPTION: desc }, [EXIT]);
-  return {
-    entryNodeId: exitId,
-    nodes: [node],
-    exitSlots: [{ nodeId: exitId, childIndex: 0 }],
-  };
-}
-
-function expandPhase(phase: PhaseRecord): PhaseExpansion {
-  switch (phase.phase_type) {
-    case "web-search":
-      return expandExternalResearch(phase);
-    case "implement-code":
-      return expandImplementCode(phase);
-    case "author-documentation":
-      return expandAuthorDocumentation(phase);
-    case "user-discussion":
-      return expandUserDiscussion(phase);
-    case "user-decision-gate":
-      return expandUserDecisionGate(phase);
-    case "agentic-decision-gate":
-      return expandAgenticDecisionGate(phase);
-    case "write-notes":
-      return expandWriteNotes(phase);
-    case "early-exit":
-      return expandEarlyExit(phase);
-    default:
-      throw new Error(
-        `Unknown phase type: ${(phase as PhaseRecord).phase_type}`,
-      );
-  }
-}
-
-// ─── Auto write-notes leaf node ───────────────────────────────────────────────
-
-function makeAutoExitNote(phase: PhaseRecord): DagNodeV3 {
-  const noteId = `${phase.phase}-auto-exit`;
-  const desc = `Execution of phase "${phase.phase}" complete. Document what was accomplished, any deferred items, and context for future sessions.`;
-  return makeNode(noteId, "write-notes", { DESCRIPTION: desc });
+  return current;
 }
 
 // ─── Main compiler ────────────────────────────────────────────────────────────
@@ -424,95 +298,73 @@ export function compilePhasesToNodes(
   phases: PhaseRecord[],
   entryPhaseId: string,
 ): { metadata: DagMetadataV3; nodes: DagNodeV3[] } {
-  // Pass 1: expand each phase
+  // Prepend the auto-injected entry-phase
+  const entryPhaseRecord: PhaseRecord = {
+    phase: "execution-kickoff",
+    phase_type: "entry-phase" as any,
+    phase_options: {},
+    children: [entryPhaseId],
+  };
+  const allPhases = [entryPhaseRecord, ...phases];
+
   const expansions = new Map<string, PhaseExpansion>();
-  for (const phase of phases) {
+  for (const phase of allPhases) {
     expansions.set(phase.phase, expandPhase(phase));
   }
 
   const phaseMap = new Map<string, PhaseRecord>();
-  for (const phase of phases) phaseMap.set(phase.phase, phase);
+  for (const phase of allPhases) phaseMap.set(phase.phase, phase);
 
-  // Collect all expanded nodes into a mutable map
   const nodeMap = new Map<string, DagNodeV3>();
   for (const [, exp] of expansions) {
     for (const node of exp.nodes) nodeMap.set(node.id, node);
   }
 
-  // Pass 2: wire exit slots to child phase entries (or auto-exit notes for leaves)
-  for (const phase of phases) {
+  // Wire exit slots to the next phase's entry node.
+  // If next = [] (terminal phase), EXIT sentinels are left in place and stripped below.
+  for (const phase of allPhases) {
     const exp = expansions.get(phase.phase)!;
-
-    if (exp.branchMap && exp.gateNodeId) {
-      // Branching phase: wire each branch slot to child entry
-      const gateNode = nodeMap.get(exp.gateNodeId)!;
-      for (const [childPhaseId, childIndex] of exp.branchMap) {
-        const childExp = expansions.get(childPhaseId);
-        if (!childExp)
-          throw new Error(`Phase "${childPhaseId}" not found during wiring`);
-        if (!gateNode.children) gateNode.children = [];
-        gateNode.children[childIndex] = childExp.entryNodeId;
-      }
-    }
-
-    if (exp.exitSlots.length === 0) continue; // branching or true terminal
+    if (exp.exitSlots.length === 0) continue;
 
     const childPhaseIds = phase.children ?? [];
+    if (childPhaseIds.length === 0) continue; // terminal — EXIT will be stripped
 
-    if (childPhaseIds.length === 0) {
-      // Leaf phase — add auto write-notes exit if not already a terminal type
-      if (
-        phase.phase_type !== "write-notes" &&
-        phase.phase_type !== "early-exit"
-      ) {
-        const autoNote = makeAutoExitNote(phase);
-        nodeMap.set(autoNote.id, autoNote);
-        for (const slot of exp.exitSlots) {
-          const node = nodeMap.get(slot.nodeId)!;
-          if (!node.children) node.children = [];
-          while (node.children.length <= slot.childIndex)
-            node.children.push(EXIT);
-          node.children[slot.childIndex] = autoNote.id;
-        }
-      }
-      // write-notes / early-exit are already terminal, exit slots are empty
-    } else if (childPhaseIds.length === 1) {
+    if (childPhaseIds.length === 1) {
       const childExp = expansions.get(childPhaseIds[0]);
-      if (!childExp)
-        throw new Error(`Phase "${childPhaseIds[0]}" not found during wiring`);
+      if (!childExp) throw new Error(`Phase "${childPhaseIds[0]}" not found during wiring`);
       for (const slot of exp.exitSlots) {
         const node = nodeMap.get(slot.nodeId)!;
         if (!node.children) node.children = [];
-        while (node.children.length <= slot.childIndex)
-          node.children.push(EXIT);
+        while (node.children.length <= slot.childIndex) node.children.push(EXIT);
         node.children[slot.childIndex] = childExp.entryNodeId;
       }
     } else {
-      // Multiple children on a non-branching phase — convergence case
-      // All exit slots point to the first child (convergence is handled by multiple parents → same entry)
-      // This only happens when parent has multiple children that are the same phase (should not occur)
-      throw new Error(
-        `Phase "${phase.phase}" (${phase.phase_type}) has ${childPhaseIds.length} children but is not a branching type`,
-      );
+      // Branching: replace each EXIT slot with all N child phase entry nodes.
+      // The spec typically has a single EXIT on the terminal node; fan it out to
+      // all branch targets so the compiled node has one child per branch.
+      for (const slot of exp.exitSlots) {
+        const node = nodeMap.get(slot.nodeId)!;
+        if (!node.children) node.children = [];
+        // Remove the EXIT sentinel at this slot index
+        node.children.splice(slot.childIndex, 1);
+        // Insert all branch entry nodes at the same position
+        const branchEntries: string[] = [];
+        for (const childPhaseId of childPhaseIds) {
+          const childExp = expansions.get(childPhaseId);
+          if (!childExp) throw new Error(`Phase "${childPhaseId}" not found during wiring`);
+          branchEntries.push(childExp.entryNodeId);
+        }
+        node.children.splice(slot.childIndex, 0, ...branchEntries);
+      }
     }
   }
 
-  // Add execution-kickoff as the graph entry
-  const kickoffSpec = loadNodeSpec("execution-kickoff");
-  const entryExp = expansions.get(entryPhaseId);
-  if (!entryExp) throw new Error(`Entry phase "${entryPhaseId}" not found`);
+  // Get entry node from entry-phase expansion
+  const kickoffExp = expansions.get("execution-kickoff")!;
 
-  const kickoff: DagNodeV3 = {
-    id: "execution-kickoff",
-    prompt: kickoffSpec.promptPath,
-    enforcement: kickoffSpec.enforcement,
-    component: "execution-kickoff",
-    children: [entryExp.entryNodeId],
-  };
+  const allNodes: DagNodeV3[] = [...nodeMap.values()];
 
-  const allNodes: DagNodeV3[] = [kickoff, ...nodeMap.values()];
-
-  // Sanitize: remove any remaining EXIT sentinels (should not occur, but guard against it)
+  // Clean up remaining EXIT sentinels
   for (const node of allNodes) {
     if (node.children) {
       node.children = node.children.filter((c) => c !== EXIT);
@@ -523,7 +375,7 @@ export function compilePhasesToNodes(
   const metadata: DagMetadataV3 = {
     schema_version: "3.0",
     id: planId,
-    entry_node_id: "execution-kickoff",
+    entry_node_id: kickoffExp.entryNodeId,
   };
 
   return { metadata, nodes: allNodes };

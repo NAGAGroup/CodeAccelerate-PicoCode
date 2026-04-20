@@ -1,71 +1,30 @@
-import type { PhaseType } from "../../types";
+import { getValidPhaseTypes, loadPhaseSchema } from "../../phase-expander";
 
-export const VALID_PHASE_TYPES = new Set<string>([
-  "web-search",
-  "implement-code",
-  "author-documentation",
-  "user-discussion",
-  "user-decision-gate",
-  "agentic-decision-gate",
-  "write-notes",
-  "early-exit",
-]);
+export const BRANCHING_PHASE_TYPE_SET = new Set<string>();
 
-export const BRANCHING_PHASE_TYPE_SET = new Set<string>([
-  "agentic-decision-gate",
-  "user-decision-gate",
-]);
-
-/** Validate phase_options for a given phase type. Throws with a clear message on failure. */
+/** Validate phase_options for a given phase type using its phase-schema.toml. */
 export function validatePhaseOptions(
   phase_type: string,
   opts: Record<string, unknown>,
 ): void {
-  const require = (field: string, expectedType?: string) => {
+  const schema = loadPhaseSchema(phase_type);
+  for (const [field, def] of Object.entries(schema.fields)) {
+    if (!def.required) continue;
     if (!(field in opts) || opts[field] === null || opts[field] === undefined) {
       throw new Error(
         `Phase type '${phase_type}' requires '${field}' in phase_options.`,
       );
     }
-    if (expectedType === "string" && typeof opts[field] !== "string") {
-      throw new Error(`'${field}' must be a string.`);
-    }
-    if (expectedType === "string[]" && !Array.isArray(opts[field])) {
+    if (def.type === "list" && !Array.isArray(opts[field])) {
       throw new Error(`'${field}' must be an array of strings.`);
     }
-  };
-
-  switch (phase_type) {
-    case "web-search":
-      require("questions", "string[]");
-      if (
-        opts["research-type"] &&
-        !["standard", "deep"].includes(opts["research-type"] as string)
-      ) {
-        throw new Error(
-          `Invalid value for 'research-type': '${opts["research-type"]}'. Expected: standard | deep.`,
-        );
-      }
-      break;
-    case "implement-code":
-      require("work-instructions", "string");
-      require("verification-instructions", "string");
-      break;
-    case "author-documentation":
-      require("goal", "string");
-      break;
-    case "user-discussion":
-      require("topic", "string");
-      break;
-    case "user-decision-gate":
-      require("question", "string");
-      break;
-    case "agentic-decision-gate":
-      require("question", "string");
-      break;
-    case "write-notes":
-    case "early-exit":
-      // All fields optional
-      break;
+    if (def.type === "scalar" && typeof opts[field] !== "string" && typeof opts[field] !== "boolean" && typeof opts[field] !== "number") {
+      throw new Error(`'${field}' must be a scalar value.`);
+    }
   }
+}
+
+/** Returns the set of user-authorable phase types from the node-library. */
+export function getValidPhaseTypeSet(): Set<string> {
+  return new Set(getValidPhaseTypes());
 }

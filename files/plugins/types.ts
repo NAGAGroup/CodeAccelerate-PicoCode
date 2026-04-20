@@ -1,19 +1,8 @@
 // === Phase-based plan format (JSONL, schema_version "4.0") ===
 
-export type PhaseType =
-  | "web-search"
-  | "implement-code"
-  | "author-documentation"
-  | "user-discussion"
-  | "user-decision-gate"
-  | "agentic-decision-gate"
-  | "write-notes"
-  | "early-exit";
-
-export const BRANCHING_PHASE_TYPES = new Set<PhaseType>([
-  "agentic-decision-gate",
-  "user-decision-gate",
-]);
+// Phase types are discovered dynamically from the node-library directory.
+// "entry-phase" is reserved and auto-injected by the compiler — not user-authorable.
+export type PhaseType = string;
 
 export interface PhaseRecord {
   phase: string; // descriptive phase ID, e.g. "2a-implement-auth"

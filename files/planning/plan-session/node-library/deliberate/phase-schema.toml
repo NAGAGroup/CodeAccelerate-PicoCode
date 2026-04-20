@@ -1,0 +1,25 @@
+[fields]
+
+[fields.is-branch]
+type = "scalar"
+required = false
+
+[fields.deliberation-instructions]
+type = "list"
+required = true
+
+[fields.planning-context]
+type = "list"
+required = false
+
+[fields.project-survey-instructions]
+type = "list"
+required = false
+
+[fields.web-search-instructions]
+type = "list"
+required = false
+
+[fields.project-analysis-instructions]
+type = "list"
+required = false

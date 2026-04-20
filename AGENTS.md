@@ -127,19 +127,18 @@ files/
 │   │   └── ...
 │   └── node-library/         # DAG node templates
 │       ├── junior-dev-work-item/      (implement code)
-│       ├── documentation-expert-work-item/  (write docs)
+│       ├── author-documentation/      (write docs)
 │       ├── verify-work-item/         (check work)
-│       ├── verify-triage/            (diagnose failures)
+│       ├── junior-dev-triage/        (diagnose failures)
 │       ├── context-scout/            (survey codebase)
 │       ├── context-insurgent/        (deep analysis)
 │       ├── external-scout/           (web research)
 │       ├── decision-gate/            (agentic branching)
 │       ├── user-decision-gate/       (human branching)
 │       ├── user-discussion/          (conversation)
-│       ├── write-notes/              (checkpoint)
+│       ├── write-notes/              (checkpoint/leaf)
 │       ├── project-setup/            (environment setup)
-│       ├── commit/                   (git commit)
-│       └── CATALOGUE.md              # Index of all nodes
+│       └── commit/                   (git commit)
 │
 ├── plugins/
 │   ├── planning-enforcement.ts  # Main plugin (TypeScript)
@@ -241,70 +240,74 @@ permission:
 
 ---
 
-## Planning Schema (Key Phase Types)
+## Planning Schema (Phase Types)
 
-Plans are DAGs of typed phases. Defined in `files/skills/planning-schema/SKILL.md`.
+Plans are DAGs of exactly four typed phases. Full schema in `files/skills/planning-schema/SKILL.md`.
 
 ### `implement-code`
-**Researches, implements, verifies, and retries a code goal** — bundled into single node with auto-triage loops.
+Researches, implements, verifies, and retries a code goal — bundled with auto-triage loops.
 
 ```toml
 [[phases]]
 id = "my-feature"
 type = "implement-code"
 next = ["next-phase"]
-project-survey-topics = ["survey areas before work"]
-web-search-questions = ["research questions for pre-work"]
-deep-search-questions = ["codebase analysis before work"]
-pre-work-project-setup-instructions = ["setup commands to run"]
+external-deps = "no"
+pre-work-project-survey = ["survey areas before work"]
+pre-work-web-search = ["research questions for pre-work"]
+pre-work-project-analysis = ["codebase analysis before work"]
+pre-work-project-setup = ["setup commands to run"]
 work-instructions = "detailed implementation steps"
 verification-instructions = "success criteria: compilation, tests, etc."
 commit = false
 ```
 
-**Critical:** `work-instructions` and `verification-instructions` must include references to pre-work steps and external dependencies. Don't assume the orchestrator will relay this context — junior-dev won't know about it otherwise.
+`work-instructions` and `verification-instructions` must include references to pre-work and external dependencies — junior-dev won't have that context otherwise.
 
-### `author-documentation`
-**Single-dispatch doc goal** — no retry loop, no pre-work survey.
+### `write-documentation`
+Delegates a documentation goal to documentation-expert, with optional bundled pre-documentation research.
 
 ```toml
 [[phases]]
 id = "update-readme"
-type = "author-documentation"
+type = "write-documentation"
 next = ["next-phase"]
 goal = "update README with new deployment instructions"
+pre-documentation-project-survey = ["..."]
+pre-documentation-web-search = ["..."]
+pre-documentation-project-analysis = ["..."]
 commit = false
 ```
 
-### `user-decision-gate`
-**User chooses between branches** — linear, no auto-routing.
+### `user-discussion`
+Open discussion with the user, or a user-decision gate when `is-decision = "yes"`. Pre-discussion research bundled in.
 
 ```toml
 [[phases]]
-id = "pick-approach"
-type = "user-decision-gate"
-next = ["approach-a", "approach-b"]
-question = "Should we use approach A or B?"
+id = "discuss-approach"
+type = "user-discussion"
+next = ["approach-a", "approach-b"]   # 2+ when is-decision = "yes"
+is-decision = "yes"
+discussion-topics = ["Which approach should we use — A or B?"]
+pre-discussion-project-survey = ["..."]
+pre-discussion-web-search = ["..."]
+pre-discussion-project-analysis = ["..."]
 ```
 
-### `agentic-decision-gate`
-**Agent routes based on evidence** — no user input needed.
+### `agentic-decision-making`
+Agent routes between branches based on evidence. Pre-decision research bundled in. Always branching.
 
 ```toml
 [[phases]]
-id = "check-deps"
-type = "agentic-decision-gate"
-next = ["has-deps", "no-deps"]
-question = "Does the project have external dependencies?"
+id = "decide-framework"
+type = "agentic-decision-making"
+next = ["use-option-a", "use-option-b"]
+decision-factors = "Does the project already have X installed?"
+decision-outcomes = ["Yes — proceed with option A", "No — proceed with option B"]
+pre-decision-project-survey = ["..."]
+pre-decision-web-search = ["..."]
+pre-decision-project-analysis = ["..."]
 ```
-
-### Other phases
-- `web-search` — External research (informs decisions, does NOT satisfy pre-work web search)
-- `user-discussion` — Open conversation with user (linear)
-- `write-notes` — Checkpoint — documents findings
-- `project-setup` — Environment setup
-- `verify-work-item` — Check completed work
-- `verify-triage` — Diagnose and fix verification failures
 
 ---
 

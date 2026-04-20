@@ -60,13 +60,9 @@ Plans are DAGs composed of typed phases:
 | Phase | Purpose |
 |---|---|
 | `implement-code` | Research, implement, verify, and retry — bundles pre-work survey, web search, deep analysis, setup, implementation, and verification into a single phase with automatic triage loops |
-| `author-documentation` | Self-explanatory |
-| `web-search` | External research to inform decisions — does not satisfy pre-work research within `work` phases |
-| `user-discussion` | Open-ended discussion with the user (linear, no branching) |
-| `user-decision-gate` | User chooses between execution branches |
-| `agentic-decision-gate` | Agent routes between branches based on evidence |
-| `write-notes` | Checkpoint — documents findings, decisions, context |
-| `early-exit` | Planned stopping point with handoff context |
+| `write-documentation` | Delegates a documentation goal to documentation-expert, with optional pre-documentation research bundled in |
+| `user-discussion` | Open-ended discussion with the user, or a user-decision gate when `is-decision = "yes"` — pre-discussion research bundled in |
+| `agentic-decision-making` | Agent routes between branches based on evidence — pre-decision research bundled in |
 
 ---
 

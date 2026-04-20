@@ -13,6 +13,9 @@
     "explore": {
       "disable": true
     },
+		"build": {
+			"model": "opencode/mimo-v2-omni-free"
+		},
     "headwrench": {
       "model": "opencode/big-pickle"
     },
@@ -35,9 +38,6 @@
       "model": "opencode/big-pickle"
     },
     "tailwrench": {
-      "model": "opencode/big-pickle"
-    },
-    "autonomous-agent": {
       "model": "opencode/big-pickle"
     },
     "compaction": {

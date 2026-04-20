@@ -1,26 +1,23 @@
-# External Research
+Execute the following external research protocol to inform planning decisions for the project identified by `{{PLAN_NAME}}`.
 
-Delegate an external-scout subagent using the `task` tool to perform web search to inform planning decisions.
+**Phase 1: Preflight and Assessment**
+1.  **Retrieve Context:** Use the `qdrant_qdrant-find` tool with `collection_name={{PLAN_NAME}}` to retrieve the user's established goal, constraints, and orientation findings.
+2.  **Determine Need:** Assess whether external research is necessary to fill knowledge gaps or inform high-level planning decisions, based on the retrieved context.
 
-Do not use this step to solve execution-phase problems. Scope is restricted to surveying the landscape of options and approaches that will be decided on during plan execution — not specific implementation details or API docs.
+**Phase 2: Execution Path**
+*   **If Research is NOT Needed:** Confirm with the user that no research is required, and then immediately call the `task` tool instructing `external-scout` to return immediately.
+*   **If Research IS Needed:**
+    1.  **Construct Prompt:** Create a single, highly structured prompt for `external-scout`. This prompt must explicitly define:
+        *   The specific research questions and topics required.
+        *   The project constraints that the findings must adhere to.
+        *   A summary of prior findings (from Phase 1) to prevent duplication.
+        *   Strict reporting requirements (structure, required content, and specific items to exclude).
+    2.  **Delegate Task:** Call the `task` tool with `subagent_type=external-scout`, the structured prompt, and a descriptive summary.
 
-**Hard Rules**
-1. Write your prompt as instructions *to* external-scout — treat it as a direct message to the agent, not commentary about it.
-2. Use structured formatting in your prompt (sections, lists) — not dense text.
-3. Specify how you want external-scout to report back: structure, content, what to exclude.
-4. Never ask external-scout for specific implementation details or API/user docs. Survey the landscape of options only.
-
-**Execution Steps:**
-
-1. **Preflight:** Use `qdrant_qdrant-find` with `collection_name={{PLAN_NAME}}` to retrieve the user's goal, constraints, and orientation findings from prior steps. Determine what to query based on what's useful to inform the delegation. Assess whether external research is actually needed to inform planning decisions.
-
-2. **If research is not needed:** Confirm with the user first. Then call `task` instructing external-scout that no research is needed and it can return immediately.
-
-3. **If research is needed:** Construct a structured prompt for external-scout that defines: the research questions and topics, what prior steps already established (so external-scout fills gaps, not duplicates), project constraints the research must account for, and reporting requirements. Call `task` with `subagent_type=external-scout`, the structured `prompt`, and a `description`.
-
-4. **Note Taking:** Categorize the report into distinct notes. Call `qdrant_qdrant-store` for each distinct note using `collection_name={{PLAN_NAME}}`. Do not store as a monolithic note — it makes discoverability harder.
-
-5. **Gate:** Verify before calling `next_step`:
-   - Notes were stored as distinct entries using `collection_name={{PLAN_NAME}}`.
-   - Findings and unknowns are captured.
-   If the gate fails, add missing notes. Proceed immediately — do not wait for user instruction.
+**Phase 3: Post-Processing and Gatekeeping**
+1.  **Note Categorization:** Upon receiving the `external-scout` report, categorize the findings into distinct, actionable notes.
+2.  **Storage:** For each distinct note, call the `qdrant_qdrant-store` tool using `collection_name={{PLAN_NAME}}`. Do not store the report as a single, monolithic entry.
+3.  **Verification Gate:** Before proceeding to the next step, verify that:
+    *   All findings have been stored as distinct entries using `collection_name={{PLAN_NAME}}`.
+    *   All identified findings and unknowns are captured in the notes.
+    *   If the gate fails, immediately add the missing notes and proceed without waiting for user input.

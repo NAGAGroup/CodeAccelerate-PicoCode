@@ -13,6 +13,9 @@
     "explore": {
       "disable": true
     },
+		"build": {
+			"model": "anthropic/claude-sonnet-4-6"
+		},
     "headwrench": {
       "model": "anthropic/claude-sonnet-4-6"
     },
@@ -35,9 +38,6 @@
       "model": "anthropic/claude-sonnet-4-6"
     },
     "tailwrench": {
-      "model": "anthropic/claude-sonnet-4-6"
-    },
-    "autonomous-agent": {
       "model": "anthropic/claude-sonnet-4-6"
     },
     "compaction": {

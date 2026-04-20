@@ -3,99 +3,150 @@ name: planning-schema
 description: Phase types, field schemas, and naming conventions for writing executable plans in TOML format.
 ---
 
-## web-search
-Researches external sources. Informs discussion and decision gates. This phase type does *not* satisfy pre-work web search. It is strictly for informing discussion and decisions.
+## collaborate
+
+Engages the user in discussion, research, and decision-making. Can branch if the outcome determines different execution paths.
+
 ```toml
 [[phases]]
-id = <phase-id>           # unique descriptive identifier (required)
-type = "web-search"       # phase type (required)
-next = [<child-id>]       # next phase ids (required) -- use [] for leaf/exit phases
-questions = ["...", ...]  # research questions (required)
+id = <phase-id>
+type = "collaborate"
+next = [<child-id>]
+is-branch = false
+discussion-topics = ["...", ...]
+planning-context = ["...", ...]
+project-survey-instructions = ["...", ...]
+web-search-instructions = ["...", ...]
+project-analysis-instructions = ["...", ...]
 ```
 
-## user-discussion
-Engages the user in open-ended discussion. Linear — no branching.
+### Core fields
+
+- **discussion-topics** — what to discuss with the user: requirements, preferences, tradeoffs, decisions. When `is-branch = true`, branch names must be concrete named options.
+- **planning-context** — why this phase exists and what prior findings informed it. Gives executing agents the "why" behind the work.
+
+### Pre-discussion fields
+
+These compile into pre-phase steps that run before the discussion begins in the following order.
+
+- **project-survey-instructions** — codebase areas to survey for broad orientation relevant to the discussion.
+- **web-search-instructions** — external research to inform the discussion: landscape surveys, feature comparisons, ecosystem overviews.
+- **project-analysis-instructions** — specific codebase mechanisms to deeply analyze before the discussion.
+
+---
+
+## deliberate
+
+Agent independently reasons, researches, and makes decisions. Same role as `collaborate` but without user involvement.
+
 ```toml
 [[phases]]
-id = <phase-id>           # unique descriptive identifier (required)
-type = "user-discussion"  # phase type (required)
-next = [<child-id>]       # next phase ids (required) -- use [] for leaf/exit phases
-topic = "..."             # discussion topic or goal (required)
+id = <phase-id>
+type = "deliberate"
+next = [<child-id>]
+is-branch = false
+deliberation-instructions = ["...", ...]
+planning-context = ["...", ...]
+project-survey-instructions = ["...", ...]
+web-search-instructions = ["...", ...]
+project-analysis-instructions = ["...", ...]
 ```
 
-## user-decision-gate
-Alternative to `user-discussion`. Use instead of `user-discussion` when branching is necessary.
-```toml
-[[phases]]
-id = <phase-id>                         # unique descriptive identifier (required)
-type = "user-decision-gate"             # phase type (required)
-next = [<branch-a>, <branch-b>, ...]    # branch phase ids (required) -- must have 2 or more
-question = "..."                        # question to present to the user (required)
-```
+### Core fields
 
-## agentic-decision-gate
-Executor decides between branches based on evidence.
-```toml
-[[phases]]
-id = <phase-id>                         # unique descriptive identifier (required)
-type = "agentic-decision-gate"          # phase type (required)
-next = [<branch-a>, <branch-b>, ...]    # branch phase ids (required) -- must have 2 or more
-question = "..."                        # decision question for the executor to answer from evidence (required)
-```
+- **deliberation-instructions** — what to reason through: evaluations, tradeoffs, decisions. When `is-branch = true`, branch names must be concrete named options.
+- **planning-context** — why this phase exists and what prior findings informed it.
+
+### Pre-deliberation fields
+
+These compile into pre-phase steps that run before the deliberation begins in the following order.
+
+- **project-survey-instructions** — codebase areas to survey for broad orientation relevant to the deliberation.
+- **web-search-instructions** — external research to inform the deliberation: technical comparisons, best practices, ecosystem options.
+- **project-analysis-instructions** — specific codebase mechanisms to deeply analyze before deliberating.
+
+---
 
 ## implement-code
-Researches, implements, verifies, and retries a code goal. Junior-dev handles the full cycle — implementation, running builds/tests, and all triage — in a `work → [triage] × 5` chain. Failure after all retries exits the plan.
 
-Provide comprehensive instructions for both work and verification. *Always* include references to pre-work steps in the `*-instructions` fields — this provides continuity between steps and gives junior-dev the context to perform its own web searches as it works.
-
-This is especially relevant when working with external dependencies/resources. The instructions should include:
-
-- external dependencies involved
-- web searches junior-dev should perform as it works, in addition to the pre-work web research (never assume the orchestrating agent will relay this on its own)
+Researches, sets up, implements, and verifies code. Includes automatic triage retries on failure.
 
 ```toml
 [[phases]]
-id = <phase-id>                            # unique descriptive identifier (required)
-type = "implement-code"                    # phase type (required)
-next = [<child-id>]                        # next phase ids (required) -- use [] for leaf/exit phases
-project-survey-topics = ["...", ...]       # codebase areas to survey as a high-level overview before work (optional)
-web-search-questions = ["...", ...]        # work-related web research, e.g. user docs, APIs, etc. (optional) -- required if work involves external dependencies
-deep-search-questions = ["...", ...]       # codebase search and analysis before work (optional)
-pre-work-project-setup-instructions = ["...", ...]  # project setup steps to run before work (optional)
-work-instructions = "..."                  # detailed instructions for completing the work (required) -- include references to pre-work steps, external deps, and web searches junior-dev should run
-verification-instructions = "..."         # success criteria (required) -- what junior-dev must verify after implementing: compilation, test output, visual checks, API responses, etc.
-commit = false                             # commit after successful verify (optional) -- default false
+id = <phase-id>
+type = "implement-code"
+next = [<child-id>]
+planning-context = ["...", ...]
+project-survey-instructions = ["...", ...]
+web-search-instructions = ["...", ...]
+project-analysis-instructions = ["...", ...]
+setup-instructions = ["...", ...]
+implement-instructions = ["...", ...]
+verify-instructions = ["...", ...]
+constraints = ["...", ...]
 ```
+
+### Core fields
+
+- **planning-context** — why this phase exists and what prior findings informed it.
+- **setup-instructions** — project setup only: dependency installation, build system configuration, config file changes, scaffolding directory structures. No code implementation belongs here.
+- **implement-instructions** — code implementation only: writing source code, modifying existing source files, adding tests. No project setup belongs here.
+- **verify-instructions** — concrete success criteria: build commands, test commands, visual checks, expected outputs. The executing agent uses exactly what you write here.
+- **constraints** — invariants that must hold even during triage and retries. The executing agent checks these alongside verification.
+
+**Project Setup Mandate:** `setup-instructions` *must* be used if there are any project setup steps that need to take place before implementation. The `implement-instructions` field is strictly for code implementation steps. This separation allows the executing agent to perform all necessary setup before any code changes, which is crucial for ensuring a smooth implementation process and avoiding issues that can arise from interleaving setup and implementation steps.
+
+### Pre-work fields
+
+These compile into pre-phase steps that run before any implementation begins in the following order.
+
+- **project-survey-instructions** — codebase areas to survey for broad orientation relevant to the implementation.
+- **web-search-instructions** — external research needed for the work: API docs, integration guides, user guides, best practices.
+- **project-analysis-instructions** — specific codebase mechanisms to deeply analyze before implementation.
+
+---
 
 ## author-documentation
-Delegates a documentation goal to documentation-expert. Single node, no retry loop. Use for writing, updating, or restructuring docs — not for any code changes.
+
+Researches, plans, and writes documentation.
 
 ```toml
 [[phases]]
-id = <phase-id>                            # unique descriptive identifier (required)
-type = "author-documentation"             # phase type (required)
-next = [<child-id>]                        # next phase ids (required) -- use [] for leaf/exit phases
-goal = "..."                               # documentation goal (required) -- what to write, update, or restructure
-commit = false                             # commit after completion (optional) -- default false
+id = <phase-id>
+type = "author-documentation"
+next = [<child-id>]
+planning-context = ["...", ...]
+project-survey-instructions = ["...", ...]
+web-search-instructions = ["...", ...]
+project-analysis-instructions = ["...", ...]
+authoring-instructions = ["...", ...]
+constraints = ["...", ...]
 ```
 
-## write-notes
-Documents findings, decisions, and context. Use as a checkpoint or leaf.
-```toml
-[[phases]]
-id = <phase-id>           # unique descriptive identifier (required)
-type = "write-notes"      # phase type (required)
-next = []                 # next phase ids (required) -- use [] for leaf/exit phases
-context = "..."           # what to document (optional)
-```
+### Core fields
 
-## early-exit
-A valid planned stopping point. Documents context and hands off to a future session.
+- **planning-context** — why this phase exists and what prior findings informed it.
+- **authoring-instructions** — what to write, covering scope, structure, and content expectations.
+- **constraints** — style, scope, or content constraints.
+
+### Pre-work fields
+
+These compile into pre-phase steps that run before any authoring begins in the following order.
+
+- **project-survey-instructions** — codebase areas to survey for broad orientation relevant to the documentation.
+- **web-search-instructions** — external research: documentation conventions, reference material, style guides.
+- **project-analysis-instructions** — specific codebase mechanisms to deeply analyze for accurate documentation.
+
+---
+
+## finish
+
+Planned completion or exit point. Documents what was accomplished or why execution stopped. Generic, all pre-exit phases can use the same finish phase instance.
+
 ```toml
 [[phases]]
-id = <phase-id>           # unique descriptive identifier (required)
-type = "early-exit"       # phase type (required)
-next = []                 # always a leaf -- early-exit never continues
-reason = "..."            # reason for stopping (optional)
+id = <phase-id>
+type = "finish"
+next = []
 ```
 
