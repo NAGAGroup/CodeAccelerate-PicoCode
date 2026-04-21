@@ -1,0 +1,6 @@
+!.opencode/
+!.opencode/**
+!build/
+!build/**
+!.pixi/
+!.pixi/**

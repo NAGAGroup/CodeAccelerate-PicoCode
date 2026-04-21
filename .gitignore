@@ -9,6 +9,5 @@ node_modules/
 
 # OS
 .DS_Store
-.opencode/
-.opencodeignore
+.opencode/**
 .grepai/

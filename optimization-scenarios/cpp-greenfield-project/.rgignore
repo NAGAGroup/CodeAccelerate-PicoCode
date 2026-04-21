@@ -1,0 +1,6 @@
+!build/
+!build/**
+!.pixi/
+!.pixi/**
+!.openocode/session-plans/
+!.openocode/session-plans/**
