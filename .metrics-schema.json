@@ -1,0 +1,38 @@
+{
+  "collection_pattern": "{test-type}-{profile}-variant-{iteration}-v1",
+  "per_iteration_record": {
+    "iteration": "integer",
+    "profile": "string (naga-ollama, naga, etc.)",
+    "variant_id": "string (variant-001-reasoning-v1)",
+    "variant_axes": {
+      "reasoning_verbosity": "boolean",
+      "constraint_clarity": "boolean",
+      "token_efficiency": "boolean",
+      "example_density": "integer",
+      "control_token_clarity": "boolean"
+    },
+    "timestamp": "ISO8601 datetime",
+    "metrics": {
+      "task_completion_rate": "float 0.0-1.0",
+      "constraint_adherence_rate": "float (must be 1.0 or FAIL)",
+      "tool_calling_accuracy": "float 0.0-1.0",
+      "latency_mean_ms": "integer",
+      "latency_p95_ms": "integer",
+      "latency_p99_ms": "integer"
+    },
+    "baseline_metrics": {
+      "task_completion_rate": "float (from baseline snapshot)",
+      "constraint_adherence_rate": "float (must be 1.0)",
+      "tool_calling_accuracy": "float"
+    },
+    "improvement_percent": {
+      "task_completion": "float (-100 to +100)",
+      "tool_calling_accuracy": "float (-100 to +100)"
+    },
+    "convergence_status": "string (active|triggered|exceeded)",
+    "convergence_data": {
+      "last_3_iterations_improvement_percent": "[float, float, float]",
+      "all_below_2_percent": "boolean"
+    }
+  }
+}

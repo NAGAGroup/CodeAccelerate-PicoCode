@@ -1,0 +1,38 @@
+{
+  "base_model": "gemma4:31b",
+  "lora_config": {
+    "rank": 16,
+    "alpha": 32,
+    "dropout": 0.05,
+    "bias": "none",
+    "target_modules": ["q_proj", "v_proj", "k_proj", "o_proj"],
+    "modules_to_save": ["embed_tokens", "lm_head"]
+  },
+  "training_params": {
+    "learning_rate": 1e-4,
+    "num_train_epochs": 2,
+    "per_device_train_batch_size": 4,
+    "per_device_eval_batch_size": 4,
+    "gradient_accumulation_steps": 4,
+    "weight_decay": 0.01,
+    "warmup_steps": 100,
+    "max_grad_norm": 0.3,
+    "save_steps": 100,
+    "eval_steps": 100,
+    "save_total_limit": 3
+  },
+  "training_data": {
+    "source": "synthetic_from_claude",
+    "size": 1000,
+    "split": {
+      "train": 0.7,
+      "validation": 0.15,
+      "test": 0.15
+    }
+  },
+  "deployment": {
+    "adapter_storage": ".lora-checkpoint/",
+    "adapter_naming": "adapter-iter-{N}-gemma4-31b.gguf",
+    "base_model_lock": "gemma4:31b"
+  }
+}

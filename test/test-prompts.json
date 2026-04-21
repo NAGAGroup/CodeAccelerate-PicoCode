@@ -1,0 +1,156 @@
+{
+  "agents": [
+    {
+      "name": "junior-dev",
+      "category": "implementation",
+      "description": "Code implementer — handles writing, editing, and testing",
+      "test_cases": 3,
+      "sample_prompts": [
+        "Implement a function to validate email addresses using regex",
+        "Fix the authentication module to handle expired tokens",
+        "Add TypeScript interfaces for the API response types"
+      ]
+    },
+    {
+      "name": "context-scout",
+      "category": "research",
+      "description": "Broad codebase survey and evidence gathering",
+      "test_cases": 3,
+      "sample_prompts": [
+        "Survey the authentication layer to understand current token handling",
+        "Analyze the project's error handling patterns across all modules",
+        "Identify all external dependencies used in the codebase"
+      ]
+    },
+    {
+      "name": "context-insurgent",
+      "category": "research",
+      "description": "Deep, narrow code analysis for specific issues",
+      "test_cases": 3,
+      "sample_prompts": [
+        "Deep analyze the OAuth implementation for security vulnerabilities",
+        "Trace the execution path of user login flow end-to-end",
+        "Find all instances where user input is processed unsafely"
+      ]
+    },
+    {
+      "name": "tailwrench",
+      "category": "verification",
+      "description": "Verification and testing expert",
+      "test_cases": 3,
+      "sample_prompts": [
+        "Verify the build passes and all tests are passing",
+        "Check code coverage for the authentication module",
+        "Validate that the API responses match the OpenAPI specification"
+      ]
+    },
+    {
+      "name": "external-scout",
+      "category": "research",
+      "description": "Web research with confidence tagging",
+      "test_cases": 3,
+      "sample_prompts": [
+        "Research best practices for JWT token expiration timing",
+        "Find recent security vulnerabilities in our dependencies",
+        "Search for performance optimization techniques for databases"
+      ]
+    },
+    {
+      "name": "documentation-expert",
+      "category": "documentation",
+      "description": "Documentation writing and maintenance",
+      "test_cases": 3,
+      "sample_prompts": [
+        "Write comprehensive API documentation for the authentication endpoints",
+        "Create a deployment guide for the new features",
+        "Update the README with the latest project structure"
+      ]
+    },
+    {
+      "name": "headwrench",
+      "category": "orchestration",
+      "description": "Plan orchestrator and task delegator",
+      "test_cases": 3,
+      "sample_prompts": [
+        "Plan the implementation of OAuth2 authentication support",
+        "Decompose the refactoring of the database layer",
+        "Plan the migration to TypeScript for the backend"
+      ]
+    },
+    {
+      "name": "autonomous-agent",
+      "category": "automation",
+      "description": "Autonomous execution and self-correction",
+      "test_cases": 3,
+      "sample_prompts": [
+        "Autonomously fix all linting errors in the codebase",
+        "Autonomously add missing error handling throughout the app",
+        "Autonomously optimize database query performance"
+      ]
+    }
+  ],
+  "profiles": [
+    "naga-ollama",
+    "naga",
+    "naga-haiku",
+    "naga-copilot",
+    "naga-haiku-copilot",
+    "naga-free"
+  ],
+  "baseline_version": "v1",
+  "timestamp": "2026-04-20T23:20:00Z",
+  "test_harness": {
+    "subagent_tests": {
+      "description": "Test individual agents with representative prompts",
+      "collection_prefix": "prompt-engineering-test-harness",
+      "trials_per_agent": 3,
+      "total_agents": 8,
+      "expected_total_runs": 24
+    },
+    "e2e_tests": {
+      "description": "End-to-end DAG execution tests with planning",
+      "collection_prefix": "e2e-test-harness",
+      "goal_variations": 5,
+      "expected_total_runs": 5
+    }
+  },
+  "success_criteria": {
+    "code_validation": {
+      "requirement": "100%",
+      "description": "All code must compile and pass syntax checks"
+    },
+    "verification_accuracy": {
+      "requirement": "100%",
+      "description": "All verification checks must pass tests and linters"
+    },
+    "citation_traceability": {
+      "requirement": "100%",
+      "description": "All claims must be traceable to source documents"
+    },
+    "source_confidence_tagging": {
+      "requirement": "100%",
+      "description": "All external sources must be tagged with confidence levels"
+    },
+    "factual_accuracy": {
+      "requirement": "100%",
+      "description": "All factual claims must be verified and accurate"
+    },
+    "convention_adherence": {
+      "requirement": "100%",
+      "description": "All code must follow project conventions"
+    },
+    "contradiction_preservation": {
+      "requirement": "100%",
+      "description": "Conflicting viewpoints must be preserved and noted"
+    }
+  },
+  "baseline_threshold": {
+    "hard_constraints": "90%",
+    "soft_objectives": "85%"
+  },
+  "convergence_gate": {
+    "improvement_threshold": "2%",
+    "consecutive_iterations": 3,
+    "description": "Stop optimization when improvement <2% for 3 consecutive iterations"
+  }
+}

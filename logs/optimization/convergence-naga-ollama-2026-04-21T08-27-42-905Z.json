@@ -1,0 +1,12 @@
+{
+  "timestamp": "2026-04-21T08:27:42.905Z",
+  "profile": "naga-ollama",
+  "converged": false,
+  "iterations_analyzed": 0,
+  "improvements": [],
+  "constraint_violations": false,
+  "halt_reason": "No iterations found in Qdrant",
+  "last_3_iterations": [],
+  "convergence_threshold_percent": 2,
+  "convergence_iterations_required": 3
+}

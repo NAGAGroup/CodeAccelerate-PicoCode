@@ -5,7 +5,12 @@
 	"scripts": {
 		"build": "(cd files/plugins && bun build planning-enforcement.ts --outfile planning-enforcement.js --target node --bundle) && bunx ocx build . --out dist",
 		"deploy": "bun run build && wrangler deploy",
-		"dev": "bun run build && wrangler dev"
+		"dev": "bun run build && wrangler dev",
+		"test:optimize": "bun run scripts/optimization/prompt-optimization.ts",
+		"test:lora-setup": "python3.12 scripts/optimization/lora/setup.py",
+		"test:lora-train": "python3.12 scripts/optimization/lora/train.py",
+		"test:variant-measure": "bun run scripts/optimization/variant-measurement.ts",
+		"test:convergence-check": "bun run scripts/optimization/convergence/convergence-gate.ts"
 	},
 	"devDependencies": {
 		"@opencode-ai/sdk": "latest",

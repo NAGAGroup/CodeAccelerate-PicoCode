@@ -124,7 +124,7 @@ ZeptoCode manages grepai automatically per project — no manual init or watch c
 
 ```bash
 ollama pull gemma4:4be
-export OPENCODE_OLLAMA_PORT=11434
+export OPENCODE_OLLAMA_PORT=8000
 ocx oc -p naga-ollama
 ```
 

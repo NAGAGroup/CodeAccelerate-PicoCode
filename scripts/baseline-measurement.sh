@@ -45,8 +45,8 @@ for PROFILE in "${PROFILES[@]}"; do
   # Verify Ollama is running (critical dependency)
   if [ "$PROFILE" = "naga-ollama" ]; then
     echo "Checking Ollama availability..."
-    if ! curl -s http://localhost:11434/api/tags > /dev/null 2>&1; then
-      echo -e "${RED}ERROR: Ollama not responding at localhost:11434${NC}"
+    if ! curl -s http://localhost:8000/api/tags > /dev/null 2>&1; then
+      echo -e "${RED}ERROR: Ollama not responding at localhost:8000${NC}"
       echo "Please ensure Ollama is running: ollama serve"
       OVERALL_STATUS="PARTIAL"
       FAILED_PROFILES+=("$PROFILE")

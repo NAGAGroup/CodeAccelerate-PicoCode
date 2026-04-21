@@ -1,0 +1,33 @@
+{
+  "variant_axes": [
+    {
+      "axis": "reasoning_verbosity",
+      "description": "Add explicit CoT reasoning steps",
+      "parameter": "explicit_thinking_blocks"
+    },
+    {
+      "axis": "constraint_clarity",
+      "description": "Explicit hard constraint enumeration",
+      "parameter": "hard_constraints_explicit"
+    },
+    {
+      "axis": "token_efficiency",
+      "description": "Reduce prompt token count",
+      "parameter": "max_prompt_tokens"
+    },
+    {
+      "axis": "example_density",
+      "description": "Number of examples per 100 tokens",
+      "parameter": "examples_per_100_tokens"
+    },
+    {
+      "axis": "control_token_clarity",
+      "description": "Use explicit {{}} control token markers",
+      "parameter": "control_tokens_explicit"
+    }
+  ],
+  "iteration_strategy": "round_robin_axes",
+  "max_iterations": 20,
+  "convergence_threshold_percent": 2.0,
+  "convergence_iterations": 3
+}

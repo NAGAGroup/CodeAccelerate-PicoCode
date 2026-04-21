@@ -409,7 +409,7 @@ bun run test:full
 curl http://localhost:6333/health
 
 # Check Ollama
-curl http://localhost:11434/api/tags
+curl http://localhost:8000/api/tags
 ```
 
 ---
@@ -430,7 +430,7 @@ Six profiles define different model combinations:
 ### Running with Ollama
 ```bash
 ollama pull gemma4:4be
-export OPENCODE_OLLAMA_PORT=11434
+export OPENCODE_OLLAMA_PORT=8000
 ocx oc -p naga-ollama
 ```
 

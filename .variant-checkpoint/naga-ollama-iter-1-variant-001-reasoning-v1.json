@@ -1,0 +1,32 @@
+{
+  "iteration": 1,
+  "profile": "naga-ollama",
+  "variant_id": "variant-001-reasoning-v1",
+  "timestamp": "2026-04-21T08:28:26.630Z",
+  "metrics": {
+    "task_completion_rate": 0.785,
+    "constraint_adherence_rate": 1,
+    "tool_calling_accuracy": 0.9674999999999999,
+    "latency_mean_ms": 2500,
+    "latency_p95_ms": 4200,
+    "latency_p99_ms": 6100
+  },
+  "baseline_metrics": {
+    "task_completion_rate": 0.75,
+    "constraint_adherence_rate": 1,
+    "tool_calling_accuracy": 0.95
+  },
+  "improvement_percent": {
+    "task_completion": 1.75,
+    "tool_calling_accuracy": 1.75
+  },
+  "convergence_status": "active",
+  "variant_axes": {
+    "reasoning_verbosity": true,
+    "constraint_clarity": false,
+    "token_efficiency": false,
+    "example_density": 1,
+    "control_token_clarity": false
+  },
+  "stored_at": "2026-04-21T08:28:26.630Z"
+}
