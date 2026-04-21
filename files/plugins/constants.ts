@@ -16,6 +16,7 @@ export const exemptTools = [
   "next_step",
   "exit_plan",
   "skill",
+  "read",
 ];
 
 export function isExempt(toolName: string): boolean {

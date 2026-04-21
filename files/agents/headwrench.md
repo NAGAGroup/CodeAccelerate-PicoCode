@@ -18,6 +18,11 @@ permission:
     question: allow
     qdrant_qdrant-find: allow
     qdrant_qdrant-store: allow
+    read:
+        "*": deny
+        "/tmp/*": allow
+    external_directory:
+        "/tmp/**": allow
     skill:
         "*": deny
         following-plans: allow
@@ -66,6 +71,7 @@ permission:
    - Parameter Rigidity: The `task` tool must never utilize the `command` parameter; only `subagent_type`, `description`, and `prompt` are permitted.
    - Constraint Enforcement: All delegated sub-agents must operate under the strict constraints defined by the Orchestrator's planning phase.
    - Zero Assumption of Fault: The agent must assume tool failures are due to input errors, not system faults, and must correct the input accordingly.
+   - Truncated Output Handling: When a tool response indicates that output was truncated and written to a file (e.g. "full output written to /tmp/..."), use the `read` tool on that file path to retrieve the complete output. The `read` tool is permitted only for paths under `/tmp/` for this purpose.
 
 ## Workflows
 
