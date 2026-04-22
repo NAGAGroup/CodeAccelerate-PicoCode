@@ -16,7 +16,7 @@ import dspy
 sys.path.insert(0, str(Path(__file__).parent))
 
 from config import REPO_ROOT, RESULTS_DIR, HARNESS_DIR
-from module import ZeptocodeModule
+from module import ZeptocodeModule, SCENARIO_PROJECT_DIR
 
 logging.basicConfig(
     level=logging.INFO,
@@ -89,12 +89,16 @@ def main() -> None:
 
         logger.info(f"─── Running scenario: {name} (type={stype}) ───")
 
+        phase_plan_toml = (
+            SCENARIO_PROJECT_DIR / ".opencode" / "session-plans" / name / "phase-plan.toml"
+        )
         module = ZeptocodeModule(
             repo_root=REPO_ROOT,
             scenario_name=name,
             scenario_type=stype,
             kickoff_command=kickoff_command,
             kickoff_arguments=kickoff_arguments,
+            phase_plan_toml=phase_plan_toml,
         )
 
         try:
