@@ -39,7 +39,12 @@ export async function handleNextStepAfter(
     inject: currentNode.inject,
   });
 
-  deps.client.session.prompt({
+  // Wait for the model to finish its current generation before injecting the
+  // next node prompt. Without this delay, the prompt can arrive while llama.cpp
+  // is still flushing the tool-call response, causing it to queue and stall.
+  await new Promise((resolve) => setTimeout(resolve, 2000));
+
+  await deps.client.session.prompt({
     path: { id: input.sessionID },
     body: { parts: [{ type: "text", text: promptText }] },
   });

@@ -51,8 +51,5 @@ export async function handleActivatePlanBefore(
     writeState(statePath, state);
   }
 
-  // 1000ms sleep
-  await new Promise((resolve) => setTimeout(resolve, 1000));
-
   return true;
 }
