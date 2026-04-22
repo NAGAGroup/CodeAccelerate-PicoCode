@@ -49,7 +49,7 @@ class OpenCodeClient:
             result = sock.connect_ex(("localhost", self.port))
             sock.close()
             if result == 0:
-                time.sleep(2)  # let HTTP layer fully initialise after TCP bind
+                time.sleep(10)  # let MCP servers (Qdrant, searxng, context7) fully initialise
                 return proc
             time.sleep(0.2)
 
@@ -77,22 +77,28 @@ class OpenCodeClient:
             response.raise_for_status()
             return response.json()["id"]
 
-    def send_prompt_async(self, session_id: str, text: str) -> None:
+    def send_command(self, session_id: str, command: str, arguments: str) -> None:
         """
-        Fire a prompt and return immediately (HTTP 204).
+        Execute a slash command via POST /session/:id/command.
 
-        Uses POST /session/{id}/prompt_async so the call returns before the
-        model starts generating. Completion is detected via the SSE stream.
-        Slash commands (/activate-plan, /plan-session) expand correctly from
-        prompt text via this endpoint.
+        This endpoint is blocking (waits for full model response) so we fire it
+        in a daemon thread and return immediately. Completion is detected via
+        the SSE stream. This is the only correct way to trigger slash command
+        expansion — prompt_async sends plain text that the model reads literally.
         """
-        with httpx.Client(timeout=10.0) as client:
-            response = client.post(
-                f"{self.base_url}/session/{session_id}/prompt_async",
-                json={"parts": [{"type": "text", "text": text}]},
-                params={"directory": str(self.scenario_dir)},
-            )
-            response.raise_for_status()
+        def _fire():
+            try:
+                with httpx.Client(timeout=httpx.Timeout(600.0, connect=10.0)) as client:
+                    client.post(
+                        f"{self.base_url}/session/{session_id}/command",
+                        json={"command": command, "arguments": arguments},
+                        params={"directory": str(self.scenario_dir)},
+                    )
+            except Exception as e:
+                logger.debug(f"Command thread finished: {e}")
+
+        t = threading.Thread(target=_fire, daemon=True)
+        t.start()
 
     def wait_for_completion(self, session_id: str, idle_timeout: int = 300) -> list[dict]:
         """
@@ -241,14 +247,15 @@ class OpenCodeClient:
         6. Cleanup: delete session → stop server → restore baseline
         """
         logger.info(f"Starting scenario: {scenario_name}")
+        # Reset baseline at start so each iteration begins from a clean state
+        self.reset_baseline()
         proc = self.start_server()
         try:
             session_id = self.create_session()
             logger.info(f"Session created: {session_id}")
 
-            kickoff_text = f"/{kickoff_command} {kickoff_arguments}"
-            self.send_prompt_async(session_id, kickoff_text)
-            logger.info(f"Prompt fired: {kickoff_text[:80]}")
+            self.send_command(session_id, kickoff_command, kickoff_arguments)
+            logger.info(f"Command fired: /{kickoff_command} {kickoff_arguments[:60]}")
 
             events = self.wait_for_completion(session_id)
             logger.info(f"Collected {len(events)} events for {scenario_name}")
@@ -258,4 +265,3 @@ class OpenCodeClient:
             return transcript
         finally:
             self.stop_server(proc)
-            self.reset_baseline()
