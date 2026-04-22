@@ -156,10 +156,17 @@ class OpenCodeClient:
 
                             # Any event from this session resets the idle timer
                             last_activity = time.time()
-                            logger.debug(f"[{t}]")
 
                             if t == "message.part.updated":
                                 collected.append(props)
+                                # Log text content to stdout for visibility
+                                part = props.get("part", {})
+                                text = part.get("text") or part.get("content") if isinstance(part, dict) else None
+                                if text and isinstance(text, str) and text.strip():
+                                    print(text, end="", flush=True)
+                            elif t == "session.idle":
+                                print("", flush=True)  # newline after model output
+                                logger.info("session.idle")
                             elif t == "session.error":
                                 logger.warning(f"session.error: {props}")
                                 break
