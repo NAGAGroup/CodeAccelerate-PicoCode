@@ -122,7 +122,7 @@ export function createNavigationTools(deps: PluginDeps) {
         const { metadata } = readDagV3(state.plan_path);
         const isFromEntryNode = node.id === metadata.entry_node_id;
 
-        return "ok";
+        return "";
       },
     }),
 
