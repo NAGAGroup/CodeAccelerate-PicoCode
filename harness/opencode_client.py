@@ -113,7 +113,7 @@ class OpenCodeClient:
 
         def _consume():
             collected = []
-            last_content = time.time()
+            last_activity = time.time()
             try:
                 timeout = httpx.Timeout(
                     idle_timeout + 60.0,
@@ -129,8 +129,8 @@ class OpenCodeClient:
                                 break
 
                             if not line or not line.startswith("data:"):
-                                if time.time() - last_content > idle_timeout:
-                                    logger.warning(f"Idle timeout ({idle_timeout}s)")
+                                if time.time() - last_activity > idle_timeout:
+                                    logger.warning(f"No activity for {idle_timeout}s — declaring done")
                                     break
                                 continue
 
@@ -143,22 +143,19 @@ class OpenCodeClient:
                             props = d.get("properties", {})
 
                             if props.get("sessionID") != session_id:
-                                if time.time() - last_content > idle_timeout:
-                                    logger.warning(f"Idle timeout ({idle_timeout}s)")
+                                if time.time() - last_activity > idle_timeout:
+                                    logger.warning(f"No activity for {idle_timeout}s — declaring done")
                                     break
                                 continue
 
+                            # Any event from this session resets the idle timer
+                            last_activity = time.time()
+                            logger.debug(f"[{t}]")
+
                             if t == "message.part.updated":
                                 collected.append(props)
-                                last_content = time.time()
-                            elif t == "session.idle":
-                                # The plugin may inject another prompt on session.idle
-                                # (next DAG node). Reset the timer and keep listening —
-                                # true completion is silence for idle_timeout seconds.
-                                logger.info(f"session.idle for {session_id} — resetting idle timer")
-                                last_content = time.time()
                             elif t == "session.error":
-                                logger.warning(f"session.error for {session_id}: {props}")
+                                logger.warning(f"session.error: {props}")
                                 break
             except Exception as e:
                 logger.warning(f"SSE consumer error: {e}")
