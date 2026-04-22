@@ -50,7 +50,7 @@ def build_metric(scenario_type: str, scenario_name: str):
 
     Returns the score float directly so GEPA can optimise toward 1.0.
     """
-    def metric(gold, pred, trace=None):
+    def metric(gold, pred, trace=None, pred_name=None, pred_trace=None):
         score = getattr(pred, "score", 0.0)
         feedback = getattr(pred, "feedback", "")
         logger.info(f"[metric] {scenario_name}: score={score:.3f}  feedback={feedback[:120]}")
