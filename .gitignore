@@ -13,9 +13,7 @@ node_modules/
 .grepai/
 
 # Optimization scenarios — working project dirs are ephemeral (reset by harness between runs)
-optimization-scenarios/cpp-greenfield-project/app/
-optimization-scenarios/cpp-greenfield-project/pixi.toml
-optimization-scenarios/cpp-greenfield-project/pixi.lock
+optimization-scenarios/cpp-greenfield-project/
 
 # Harness — Python bytecode and local OpenCode state
 harness/__pycache__/

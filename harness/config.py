@@ -6,6 +6,9 @@ from pathlib import Path
 # Repo root is two levels up from this file (harness/config.py → harness/ → repo root)
 REPO_ROOT = Path(__file__).parent.parent
 
+# Harness directory
+HARNESS_DIR = Path(__file__).parent
+
 # Scenario project directory
 SCENARIOS_DIR = REPO_ROOT / "optimization-scenarios"
 

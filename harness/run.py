@@ -15,7 +15,7 @@ import dspy
 # Ensure harness/ is on the path when run directly
 sys.path.insert(0, str(Path(__file__).parent))
 
-from config import REPO_ROOT, SCENARIOS_DIR, RESULTS_DIR
+from config import REPO_ROOT, SCENARIOS_DIR, RESULTS_DIR, HARNESS_DIR
 from module import ZeptocodeModule, TUI_KICKOFF_MESSAGE
 
 logging.basicConfig(
@@ -72,7 +72,7 @@ def main() -> None:
     )
 
     # ── Load scenarios from manifest ────────────────────────────────────────
-    manifest_path = SCENARIOS_DIR / "cpp-greenfield-project" / "manifest.yaml"
+    manifest_path = HARNESS_DIR / "manifest.yaml"
     scenarios = load_manifest(manifest_path)
     logger.info(f"Loaded {len(scenarios)} scenario(s) from {manifest_path}")
 
