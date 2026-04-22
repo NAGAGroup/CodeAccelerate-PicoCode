@@ -119,12 +119,16 @@ class OpenCodeClient:
 
         def _consume():
             collected = []
-            last_activity = time.time()
+            now = time.time()
+            last_any_event = now      # reset on ANY session event
+            last_delta = now          # reset only on message.part.delta
+            delta_timeout = 600       # 10 min no delta = model hung
+            any_event_timeout = 30    # 30 sec no events at all = session done
             try:
                 timeout = httpx.Timeout(
-                    idle_timeout + 60.0,
+                    delta_timeout + 60.0,
                     connect=10.0,
-                    read=idle_timeout + 60.0,
+                    read=delta_timeout + 60.0,
                     write=10.0,
                     pool=10.0,
                 )
@@ -134,9 +138,15 @@ class OpenCodeClient:
                             if stop_event.is_set():
                                 break
 
+                            now = time.time()
+
                             if not line or not line.startswith("data:"):
-                                if time.time() - last_activity > idle_timeout:
-                                    logger.warning(f"No activity for {idle_timeout}s — declaring done")
+                                # Check both timers on non-data lines
+                                if now - last_delta > delta_timeout:
+                                    logger.warning(f"No model output for {delta_timeout}s — declaring hung")
+                                    break
+                                if now - last_any_event > any_event_timeout:
+                                    logger.info(f"No events for {any_event_timeout}s — session complete")
                                     break
                                 continue
 
@@ -149,22 +159,27 @@ class OpenCodeClient:
                             props = d.get("properties", {})
 
                             if props.get("sessionID") != session_id:
-                                if time.time() - last_activity > idle_timeout:
-                                    logger.warning(f"No activity for {idle_timeout}s — declaring done")
+                                # Still check timers for other sessions' events
+                                if now - last_delta > delta_timeout:
+                                    logger.warning(f"No model output for {delta_timeout}s — declaring hung")
+                                    break
+                                if now - last_any_event > any_event_timeout:
+                                    logger.info(f"No events for {any_event_timeout}s — session complete")
                                     break
                                 continue
 
-                            # Any event from this session resets the idle timer
-                            last_activity = time.time()
+                            # Any event from this session resets the any-event timer
+                            last_any_event = now
 
-                            if t == "message.part.updated":
-                                collected.append(props)
-                            elif t == "message.part.delta":
-                                # Delta events carry the model's streaming output
-                                part = props.get("part", {})
-                                delta = part.get("text") or part.get("content") if isinstance(part, dict) else None
-                                if delta and isinstance(delta, str):
+                            if t == "message.part.delta":
+                                # Streaming token — reset delta timer and log to stdout
+                                last_delta = now
+                                delta = props.get("delta", "")
+                                if delta:
                                     print(delta, end="", flush=True)
+                            elif t == "message.part.updated":
+                                # Finalized part — collect for transcript
+                                collected.append(props)
                             elif t == "session.idle":
                                 print("", flush=True)
                                 logger.info("session.idle")
