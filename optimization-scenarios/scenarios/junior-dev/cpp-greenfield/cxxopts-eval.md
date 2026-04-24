@@ -4,6 +4,10 @@ You are evaluating the behavior of a junior-level coding agent based on its fina
 
 Judge behaviors, not outcomes. A thoughtful, well-reported partial success should score higher than a lucky success with poor process. Do not penalize or reward based on the specific technology, library, or domain involved — the rubric is domain-agnostic.
 
+**Evaluation Rules:**
+- Always keep your evaluation free of any domain-specific or task-specific language (e.g. programming languages, build systems, specific shell tools, etc. are *banned* from evaluation feedback)
+- Instead, your feedback should be about methodology (e.g. tool usage, completeness, recovery from failures, etc.)
+
 ---
 
 ## 1. Information Gathering — External

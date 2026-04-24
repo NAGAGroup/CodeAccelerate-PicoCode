@@ -1,36 +1,65 @@
 #!/usr/bin/env python3
 """
-GEPA prompt optimization harness.
+GEPA prompt optimization harness (direct gepa, no DSPy).
 
 Optimizes the body of `--optimized-prompt` against a static scenario
 (`--static-prompt`, `--agent`) using an LM-as-a-judge rubric
 (`--eval-criteria`). The file's frontmatter is preserved across all writes.
 
-Black box: `run_opencode(static_path, optimized_path, agent) -> str` — the
-user implements this. Every forward pass:
-  1. reads the current (GEPA-mutated) body from the Predict signature
-  2. writes `frontmatter + body` to the optimized prompt file
-  3. calls run_opencode
-  4. returns the resulting string as a dspy.Prediction
+Flow per candidate:
+  1. write `frontmatter + candidate["prompt"]` to the optimized prompt file
+  2. run opencode in --workdir, capture its output
+  3. judge the output via ollama and return (score, feedback)
+  4. gepa reflects on (trajectory, score, feedback) and proposes the next candidate
 
 Both the judge and the reflection LM run via ollama (default localhost:11434).
 
-Dependencies:  dspy  ollama
+Dependencies:  gepa  ollama
 """
 
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
 
-import dspy
+import gepa
 import ollama
+from gepa.core.adapter import EvaluationBatch, GEPAAdapter
 
 
 # ======================================================================
-# STUB — user implements this
+# JSON helpers — judge sometimes wraps output in ```json fences
+# ======================================================================
+
+
+def _strip_fences(s: str) -> str:
+    s = s.strip()
+    if not s.startswith("```"):
+        return s
+    lines = s.split("\n")
+    if lines[-1].strip() == "```":
+        lines = lines[:-1]
+    lines = lines[1:]
+    return "\n".join(lines).strip()
+
+
+def _extract_json(s: str) -> dict:
+    s = _strip_fences(s)
+    start = s.find("{")
+    end = s.rfind("}")
+    if start != -1 and end != -1 and end > start:
+        s = s[start : end + 1]
+    parsed = json.loads(s)
+    if isinstance(parsed, str):
+        parsed = json.loads(parsed)
+    return parsed
+
+
+# ======================================================================
+# Opencode black box
 # ======================================================================
 
 
@@ -39,9 +68,9 @@ def run_command_live(cmd: list[str]) -> tuple[str, int]:
     proc = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,  # merge stderr in; drop this to keep separate
+        stderr=subprocess.STDOUT,
         text=True,
-        bufsize=1,  # line-buffered
+        bufsize=1,
     )
     assert proc.stdout is not None
     for line in proc.stdout:
@@ -55,19 +84,30 @@ def run_command_live(cmd: list[str]) -> tuple[str, int]:
 def run_opencode(
     workdir: Path,
     static_prompt_path: Path,
-    optimized_prompt_path: Path,
     agent: str,
 ) -> str:
     with open(static_prompt_path, "r") as file:
         prompt = file.read()
     cwd = os.getcwd()
     os.chdir(workdir)
-    subprocess.call("git checkout .".split(" "))
-    subprocess.call("git clean -Xdf .".split(" "))
-    command_str = f"npx opencode run --thinking --agent {agent} '{prompt}'"
-    output, retval = run_command_live(command_str.split(" "))
-
-    os.chdir(cwd)
+    try:
+        subprocess.call(["git", "checkout", "."])
+        subprocess.call(["git", "clean", "-Xdf", "."])
+        subprocess.call(["grepai", "init", "-p", "ollama", "--yes"])
+        cmd = [
+            "npx",
+            "opencode",
+            "run",
+            "--format",
+            "json",
+            "--thinking",
+            "--agent",
+            agent,
+            prompt,
+        ]
+        output, _ = run_command_live(cmd)
+    finally:
+        os.chdir(cwd)
     return output
 
 
@@ -77,11 +117,6 @@ def run_opencode(
 
 
 def split_frontmatter(text: str) -> tuple[str, str]:
-    """
-    Split leading YAML frontmatter (delimited by `---` lines) from body.
-    Returns (frontmatter_block_including_delimiters_and_trailing_newline, body).
-    If no frontmatter is found, returns ("", text).
-    """
     if not text.startswith("---"):
         return "", text
     lines = text.split("\n")
@@ -100,92 +135,173 @@ def write_with_frontmatter(path: Path, frontmatter: str, body: str) -> None:
 
 
 # ======================================================================
-# DSPy student module — the Predict signature's .instructions IS the
-# optimized prompt body. GEPA mutates that; we forward the mutation to
-# the filesystem and call the black box.
+# Judge
 # ======================================================================
 
-
-class _OpencodeSignature(dspy.Signature):
-    """Placeholder — overwritten via with_instructions at construction."""
-
-    static_prompt_path: str = dspy.InputField()
-    agent: str = dspy.InputField()
-    output: str = dspy.OutputField()
-
-
-class OpencodeModule(dspy.Module):
-    def __init__(
-        self, workdir: Path, initial_body: str, optimized_path: Path, frontmatter: str
-    ):
-        super().__init__()
-        sig = _OpencodeSignature.with_instructions(initial_body)
-        self.predict = dspy.Predict(sig)
-        self._workdir = workdir
-        self._optimized_path = optimized_path
-        self._frontmatter = frontmatter
-
-    def forward(self, static_prompt_path: str, agent: str) -> dspy.Prediction:
-        # Whatever body GEPA currently has installed on the predictor:
-        current_body = self.predict.signature.instructions
-        # Persist it to the optimized prompt file, preserving frontmatter.
-        write_with_frontmatter(self._optimized_path, self._frontmatter, current_body)
-        # Black box call.
-        output = run_opencode(
-            workdir=self._workdir,
-            static_prompt_path=Path(static_prompt_path),
-            optimized_prompt_path=self._optimized_path,
-            agent=agent,
-        )
-        return dspy.Prediction(output=output)
-
-
-# ======================================================================
-# Ollama judge — returns dspy.Prediction(score=..., feedback=...)
-# ======================================================================
 
 _JUDGE_SYSTEM_PROMPT = """You are evaluating the output of an AI agent against a rubric.
 
-Respond with a JSON object and nothing else:
+**Input:**
+    - Evaluation criteria
+    - Json formatted log of the agent's session that is being evaluated
+
+**Output:**
+
+```json
 {
   "score": <float between 0.0 and 1.0>,
   "feedback": "<detailed textual rationale citing concrete aspects of the output against specific rubric criteria>"
 }
-
-Your feedback will be used as reflective guidance to improve the prompt that produced this output. Cite concrete evidence from the output; vague commentary wastes the optimizer's budget.
+```
 """
 
 
-def make_metric(eval_criteria: str, judge_model: str, ollama_host: str):
-    client = ollama.Client(host=ollama_host)
-
-    def metric(gold, pred, trace=None, pred_name=None, pred_trace=None):
-        user_msg = (
-            f"## Rubric\n\n{eval_criteria}\n\n"
-            f"## Agent Output\n\n{pred.output}\n\n"
-            "Evaluate the agent output against the rubric. Respond with JSON only."
+def judge(
+    client: ollama.Client,
+    model: str,
+    eval_criteria: str,
+    agent_output: str,
+) -> tuple[float, str]:
+    user_msg = (
+        "Evaluate the agent output against the rubric. Respond with JSON only "
+        "(keys *must* match: 'score', 'feedback').\n\n"
+        f"**Evaluation criteria:**\n\n{eval_criteria}\n\n"
+        f"**Agent's session log:**\n\n```json\n{agent_output}\n```\n\n"
+    )
+    print(f"[judge] calling (output len={len(agent_output)})", file=sys.stderr)
+    try:
+        response = client.chat(
+            model=model,
+            messages=[
+                {"role": "system", "content": _JUDGE_SYSTEM_PROMPT},
+                {"role": "user", "content": user_msg},
+            ],
+            format="json",
         )
-        try:
-            response = client.chat(
-                model=judge_model,
-                messages=[
-                    {"role": "system", "content": _JUDGE_SYSTEM_PROMPT},
-                    {"role": "user", "content": user_msg},
-                ],
-                format="json",
+        raw = response["message"]["content"]
+        print(f"[judge response]: {raw}", file=sys.stderr)
+        parsed = _extract_json(raw)
+        return float(parsed["score"]), str(parsed.get("feedback", ""))
+    except Exception as e:
+        import traceback
+
+        print(f"[judge] FAILED: {type(e).__name__}: {e}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        return 0.0, f"Judge error: {type(e).__name__}: {e}"
+
+
+# ======================================================================
+# GEPA adapter
+# ======================================================================
+
+
+class OpencodeAdapter(GEPAAdapter):
+    """
+    Treats the optimized prompt file as the only evolvable component.
+
+    candidate schema:  {"prompt": "<body of the optimized prompt file>"}
+    batch element schema:  {"static_prompt_path": str, "agent": str}
+    """
+
+    def __init__(
+        self,
+        workdir: Path,
+        optimized_path: Path,
+        frontmatter: str,
+        eval_criteria: str,
+        judge_client: ollama.Client,
+        judge_model: str,
+    ):
+        self._workdir = workdir
+        self._optimized_path = optimized_path
+        self._frontmatter = frontmatter
+        self._eval_criteria = eval_criteria
+        self._judge_client = judge_client
+        self._judge_model = judge_model
+
+    def evaluate(
+        self,
+        batch: list[dict],
+        candidate: dict[str, str],
+        capture_traces: bool = False,
+    ) -> EvaluationBatch:
+        body = candidate["prompt"]
+        # Persist the candidate to disk before any run — opencode reads it.
+        write_with_frontmatter(self._optimized_path, self._frontmatter, body)
+
+        outputs, scores, trajectories = [], [], []
+        for example in batch:
+            static_prompt_path = Path(example["static_prompt_path"])
+            agent = example["agent"]
+
+            transcript = run_opencode(
+                workdir=self._workdir,
+                static_prompt_path=static_prompt_path,
+                agent=agent,
             )
-            parsed = json.loads(response["message"]["content"])
-            return dspy.Prediction(
-                score=float(parsed["score"]),
-                feedback=str(parsed.get("feedback", "")),
-            )
-        except Exception as e:
-            return dspy.Prediction(
-                score=0.0,
-                feedback=f"Judge error: {type(e).__name__}: {e}",
+            score, feedback = judge(
+                client=self._judge_client,
+                model=self._judge_model,
+                eval_criteria=self._eval_criteria,
+                agent_output=transcript,
             )
 
-    return metric
+            outputs.append(transcript)
+            scores.append(score)
+            if capture_traces:
+                trajectories.append(
+                    {
+                        "static_prompt_path": str(static_prompt_path),
+                        "agent": agent,
+                        "candidate_prompt": body,
+                        "transcript": transcript,
+                        "score": score,
+                        "feedback": feedback,
+                    }
+                )
+
+        return EvaluationBatch(
+            outputs=outputs,
+            scores=scores,
+            trajectories=trajectories if capture_traces else None,
+        )
+
+    def make_reflective_dataset(
+        self,
+        candidate: dict[str, str],
+        eval_batch: EvaluationBatch,
+        components_to_update: list[str],
+    ) -> dict[str, list[dict]]:
+        reflective = {}
+        for component in components_to_update:
+            rows = []
+            for traj, score in zip(eval_batch.trajectories or [], eval_batch.scores):
+                with open(traj["static_prompt_path"], "r") as f:
+                    scenario_prompt = f.read()
+                CONSTRAINT = (
+                    "\n\n---\n"
+                    "**Rules on Proposed Prompt:**\n"
+                    "- Always keep your proposed changes free of any domain-specific or task-specific language "
+                    "(programming languages, build systems, specific shell tools, "
+                    "library names, file extensions, etc. are *banned* from your proposed changes).\n"
+                    "- Instead, keep the prompt focused on methodology: tool usage, information "
+                    "gathering, completeness, recovery from failures, reporting discipline.\n"
+                    "- The prompt must remain applicable across arbitrary task domains."
+                )
+
+                rows.append(
+                    {
+                        "Inputs": {...},
+                        "Generated Outputs": traj["transcript"],
+                        "Feedback": (
+                            f"{CONSTRAINT}"
+                            f"Score: {score:.3f}\n\n"
+                            f"Rubric-based feedback:\n{traj['feedback']}"
+                        ),
+                    }
+                )
+            reflective[component] = rows
+        return reflective
 
 
 # ======================================================================
@@ -220,10 +336,7 @@ def main() -> int:
         help="Path to the rubric file used by the judge",
     )
     parser.add_argument(
-        "--agent",
-        type=str,
-        required=True,
-        help="Agent name passed through to the opencode stub",
+        "--agent", type=str, required=True, help="Agent name passed through to opencode"
     )
     parser.add_argument(
         "--judge-model",
@@ -235,7 +348,7 @@ def main() -> int:
         "--reflection-model",
         type=str,
         default="eval-model",
-        help="Ollama model name for GEPA's reflection LM",
+        help="Ollama model name for GEPA's reflection LM (passed as ollama_chat/<name>)",
     )
     parser.add_argument(
         "--ollama-host",
@@ -244,11 +357,10 @@ def main() -> int:
         help="Ollama host URL",
     )
     parser.add_argument(
-        "--auto",
-        type=str,
-        default="light",
-        choices=["light", "medium", "heavy"],
-        help="GEPA budget preset",
+        "--max-metric-calls",
+        type=int,
+        default=30,
+        help="Budget: total number of candidate evaluations",
     )
     args = parser.parse_args()
 
@@ -257,60 +369,49 @@ def main() -> int:
     optimized_text = args.optimized_prompt.read_text(encoding="utf-8")
     frontmatter, initial_body = split_frontmatter(optimized_text)
 
-    # --- Configure DSPy ---
-    # The task LM is never actually invoked by OpencodeModule.forward (we
-    # only read signature.instructions and call the black box), but dspy
-    # requires a default LM to be configured.
-    task_lm = dspy.LM(
-        f"ollama_chat/{args.reflection_model}",
-        api_base=args.ollama_host,
-        max_tokens=32000,
-    )
-    dspy.configure(lm=task_lm)
+    # --- Judge client ---
+    judge_client = ollama.Client(host=args.ollama_host)
 
-    reflection_lm = dspy.LM(
-        f"ollama_chat/{args.reflection_model}",
-        api_base=args.ollama_host,
-        temperature=1.0,
-        max_tokens=32000,
-    )
-
-    # --- Student, trainset, metric ---
-    student = OpencodeModule(
+    # --- Adapter ---
+    adapter = OpencodeAdapter(
         workdir=args.workdir,
-        initial_body=initial_body,
         optimized_path=args.optimized_prompt,
         frontmatter=frontmatter,
+        eval_criteria=eval_criteria,
+        judge_client=judge_client,
+        judge_model=args.judge_model,
     )
 
+    # --- Trainset (single scenario) ---
     trainset = [
-        dspy.Example(
-            static_prompt_path=str(args.static_prompt),
-            agent=args.agent,
-        ).with_inputs("static_prompt_path", "agent")
+        {
+            "static_prompt_path": str(args.static_prompt),
+            "agent": args.agent,
+        }
     ]
 
-    metric = make_metric(
-        eval_criteria=eval_criteria,
-        judge_model=args.judge_model,
-        ollama_host=args.ollama_host,
-    )
+    # --- Seed candidate ---
+    seed_candidate = {"prompt": initial_body}
 
-    # --- GEPA ---
-    optimizer = dspy.GEPA(
-        metric=metric,
-        auto=args.auto,
-        reflection_lm=reflection_lm,
-        reflection_minibatch_size=1,
-        track_stats=True,
-    )
+    # --- Reflection LM: LiteLLM-style string routed through ollama ---
+    # gepa uses LiteLLM under the hood; ollama_chat/<model> hits the
+    # local ollama server. api_base is picked up from OLLAMA_HOST / default.
+    os.environ.setdefault("OLLAMA_API_BASE", args.ollama_host)
+    reflection_lm = f"ollama_chat/{args.reflection_model}"
 
     print("[harness] Running GEPA optimization...", file=sys.stderr)
-    optimized = optimizer.compile(student, trainset=trainset)
+    result = gepa.optimize(
+        seed_candidate=seed_candidate,
+        trainset=trainset,
+        adapter=adapter,
+        reflection_lm=reflection_lm,
+        max_metric_calls=args.max_metric_calls,
+        display_progress_bar=True,
+    )
 
     # --- Persist final best body ---
-    final_body = optimized.predict.signature.instructions
-    write_with_frontmatter(args.optimized_prompt, frontmatter, final_body)
+    best = result.best_candidate["prompt"]
+    write_with_frontmatter(args.optimized_prompt, frontmatter, best)
     print(
         f"[harness] Final optimized prompt written to {args.optimized_prompt}",
         file=sys.stderr,
