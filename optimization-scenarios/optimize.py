@@ -10,9 +10,10 @@ Flow per candidate:
   1. write `frontmatter + candidate["prompt"]` to the optimized prompt file
   2. run opencode in --workdir, capture its output
   3. judge the output via ollama and return (score, feedback)
-  4. gepa reflects on (trajectory, score, feedback) and proposes the next candidate
+  4. custom proposer reflects on (transcript, score, feedback) and proposes
+     the next candidate, enforcing methodology-only constraints
 
-Both the judge and the reflection LM run via ollama (default localhost:11434).
+Both the judge and the proposer run via ollama (default localhost:11434).
 
 Dependencies:  gepa  ollama
 """
@@ -20,18 +21,17 @@ Dependencies:  gepa  ollama
 import argparse
 import json
 import os
-import re
 import subprocess
 import sys
 from pathlib import Path
 
 import gepa
 import ollama
-from gepa.core.adapter import EvaluationBatch, GEPAAdapter
+from gepa.core.adapter import EvaluationBatch, GEPAAdapter, ProposalFn
 
 
 # ======================================================================
-# JSON helpers — judge sometimes wraps output in ```json fences
+# JSON helpers — models sometimes wrap output in ```json fences
 # ======================================================================
 
 
@@ -278,23 +278,14 @@ class OpencodeAdapter(GEPAAdapter):
             for traj, score in zip(eval_batch.trajectories or [], eval_batch.scores):
                 with open(traj["static_prompt_path"], "r") as f:
                     scenario_prompt = f.read()
-                CONSTRAINT = (
-                    "\n\n---\n"
-                    "**Rules on Proposed Prompt:**\n"
-                    "- Always keep your proposed changes free of any domain-specific or task-specific language "
-                    "(programming languages, build systems, specific shell tools, "
-                    "library names, file extensions, etc. are *banned* from your proposed changes).\n"
-                    "- Instead, keep the prompt focused on methodology: tool usage, information "
-                    "gathering, completeness, recovery from failures, reporting discipline.\n"
-                    "- The prompt must remain applicable across arbitrary task domains."
-                )
-
                 rows.append(
                     {
-                        "Inputs": {...},
+                        "Inputs": {
+                            "scenario_prompt": scenario_prompt,
+                            "agent": traj["agent"],
+                        },
                         "Generated Outputs": traj["transcript"],
                         "Feedback": (
-                            f"{CONSTRAINT}"
                             f"Score: {score:.3f}\n\n"
                             f"Rubric-based feedback:\n{traj['feedback']}"
                         ),
@@ -302,6 +293,109 @@ class OpencodeAdapter(GEPAAdapter):
                 )
             reflective[component] = rows
         return reflective
+
+
+# ======================================================================
+# Custom proposer — enforces methodology-only prompt revisions
+# ======================================================================
+
+
+_PROPOSER_SYSTEM_PROMPT = """You are improving an AI agent's system prompt based on feedback from evaluation runs.
+
+**Your task:** Given the current prompt and a set of feedback examples, propose an improved version of the prompt.
+
+**Prompt Revision Rules:**
+- Always keep the prompt free of any domain-specific or task-specific language (e.g. programming languages, build systems, specific shell tools, library names, file extensions, framework names, etc. are *banned* from the prompt)
+- Instead, the prompt should focus on methodology (e.g. tool usage, information gathering, completeness, recovery from failures, reporting discipline, etc.)
+- Always keep the prompt applicable across arbitrary task domains
+
+**Output format:** Respond with JSON only:
+{
+  "improved_prompt": "<the full text of the new prompt>"
+}
+"""
+
+
+class OllamaProposer(ProposalFn):
+    """
+    Custom instruction proposer that enforces domain-agnostic prompt constraints.
+    Uses ollama directly instead of going through LiteLLM.
+    """
+
+    def __init__(
+        self,
+        client: ollama.Client,
+        model: str,
+        max_transcript_chars: int = 2000,
+    ):
+        self._client = client
+        self._model = model
+        self._max_transcript_chars = max_transcript_chars
+
+    def __call__(
+        self,
+        candidate: dict[str, str],
+        reflective_dataset: dict[str, list[dict]],
+        components_to_update: list[str],
+    ) -> dict[str, str]:
+        updated = {}
+        for component in components_to_update:
+            if component not in candidate or component not in reflective_dataset:
+                continue
+
+            current = candidate[component]
+            examples = reflective_dataset[component]
+
+            feedback_block = "\n\n".join(
+                f"### Example {i + 1}\n"
+                f"**Generated Output (excerpt):**\n"
+                f"{str(ex.get('Generated Outputs', ''))[: self._max_transcript_chars]}\n\n"
+                f"**Feedback:**\n{ex.get('Feedback', 'No feedback')}"
+                for i, ex in enumerate(examples)
+            )
+
+            user_msg = (
+                f"## Current Prompt\n\n{current}\n\n"
+                f"## Evaluation Feedback\n\n{feedback_block}\n\n"
+                "Propose an improved version of the current prompt that addresses "
+                "the feedback while strictly following the Prompt Revision Rules "
+                "in your system instructions. Respond with JSON only."
+            )
+
+            try:
+                response = self._client.chat(
+                    model=self._model,
+                    messages=[
+                        {"role": "system", "content": _PROPOSER_SYSTEM_PROMPT},
+                        {"role": "user", "content": user_msg},
+                    ],
+                    format="json",
+                )
+                raw = response["message"]["content"]
+                print(
+                    f"[proposer response]: {raw[:500]}{'...' if len(raw) > 500 else ''}",
+                    file=sys.stderr,
+                )
+                parsed = _extract_json(raw)
+                improved = parsed.get("improved_prompt")
+                if isinstance(improved, str) and improved.strip():
+                    updated[component] = improved
+                else:
+                    print(
+                        "[proposer] empty/invalid improved_prompt; skipping component",
+                        file=sys.stderr,
+                    )
+            except Exception as e:
+                import traceback
+
+                print(
+                    f"[proposer] FAILED: {type(e).__name__}: {e}",
+                    file=sys.stderr,
+                )
+                traceback.print_exc(file=sys.stderr)
+                # Skip this component — gepa treats as no proposal
+
+        return updated
 
 
 # ======================================================================
@@ -348,7 +442,7 @@ def main() -> int:
         "--reflection-model",
         type=str,
         default="eval-model",
-        help="Ollama model name for GEPA's reflection LM (passed as ollama_chat/<name>)",
+        help="Ollama model name for the custom proposer",
     )
     parser.add_argument(
         "--ollama-host",
@@ -369,8 +463,8 @@ def main() -> int:
     optimized_text = args.optimized_prompt.read_text(encoding="utf-8")
     frontmatter, initial_body = split_frontmatter(optimized_text)
 
-    # --- Judge client ---
-    judge_client = ollama.Client(host=args.ollama_host)
+    # --- Ollama client ---
+    ollama_client = ollama.Client(host=args.ollama_host)
 
     # --- Adapter ---
     adapter = OpencodeAdapter(
@@ -378,8 +472,14 @@ def main() -> int:
         optimized_path=args.optimized_prompt,
         frontmatter=frontmatter,
         eval_criteria=eval_criteria,
-        judge_client=judge_client,
+        judge_client=ollama_client,
         judge_model=args.judge_model,
+    )
+
+    # --- Proposer (enforces methodology-only constraint) ---
+    proposer = OllamaProposer(
+        client=ollama_client,
+        model=args.reflection_model,
     )
 
     # --- Trainset (single scenario) ---
@@ -393,18 +493,13 @@ def main() -> int:
     # --- Seed candidate ---
     seed_candidate = {"prompt": initial_body}
 
-    # --- Reflection LM: LiteLLM-style string routed through ollama ---
-    # gepa uses LiteLLM under the hood; ollama_chat/<model> hits the
-    # local ollama server. api_base is picked up from OLLAMA_HOST / default.
-    os.environ.setdefault("OLLAMA_API_BASE", args.ollama_host)
-    reflection_lm = f"ollama_chat/{args.reflection_model}"
-
     print("[harness] Running GEPA optimization...", file=sys.stderr)
     result = gepa.optimize(
         seed_candidate=seed_candidate,
         trainset=trainset,
         adapter=adapter,
-        reflection_lm=reflection_lm,
+        reflection_lm=None,
+        custom_candidate_proposer=proposer,  # <-- was instruction_proposer
         max_metric_calls=args.max_metric_calls,
         display_progress_bar=True,
     )

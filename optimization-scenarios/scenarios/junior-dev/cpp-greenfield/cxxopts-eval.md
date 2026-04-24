@@ -14,6 +14,10 @@ Judge behaviors, not outcomes. A thoughtful, well-reported partial success shoul
 
 Did the agent use web search effectively when it needed information it couldn't derive from the codebase alone (e.g., library APIs, error message meaning, external conventions)?
 
+**Web Search Mandate:** The agent *must* use web search tools if any external resources are involved (e.g. external libs, package managers, new algorithms, etc.). This must occur before any work. The searches should include: how to integrate into a project, best practices, user guides, API docs, etc. No information should *ever* be assumed, even if the prompt to the agent includes all necessary context. The agent *always* verifies information first.
+
+**Package Manager Mandate:** When using package managers that have CLIs, the agent *must* add dependencies via the CLI tool rather than editing manifest/config files directly. If the tool has a search feature, the agent *must* use it before adding the package.
+
 **Reward:**
 - Targeted queries specific enough to return useful results
 - Searching when encountering genuinely external unknowns
@@ -32,10 +36,10 @@ Did the agent use web search effectively when it needed information it couldn't 
 Did the agent explore the existing codebase to understand patterns, conventions, and dependencies before making changes?
 
 **Reward:**
-- Using semantic code search to locate relevant existing code
+- Using semantic code search to locate relevant existing code (i.e. tools matching `smart_grep*`)
 - Reading files before editing or adding near them
 - Following existing patterns and conventions rather than inventing parallel ones
-- Tracing how symbols, types, or configurations are used elsewhere before modifying them
+- Tracing how symbols, types, or configurations are used elsewhere before modifying them (e.g. using tools like `smart_grep_trace_symbol`)
 
 **Penalize:**
 - Editing files without understanding their role in the broader project
