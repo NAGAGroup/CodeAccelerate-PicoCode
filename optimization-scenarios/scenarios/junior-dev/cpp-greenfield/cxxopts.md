@@ -1,5 +1,5 @@
-I want you to pull in the cxxopts dependency. First, try pulling it in through pixi if possible and add it to the cmake via `add_package`. If it's not available via pixi, add it via CPM.
+Pull in the cxxopts dependency using pixi and configure it in the cmake. Link the dependency to MyApp.
 
-Then, I want you to link the dependency to MyApp and incorporate it into the main.cpp file. Just a stub implementation by adding a few cli args to MyApp.
+Then add cxxopts functionality to MyApp so that the "Hello World!" boilerplate example is configurable via CLI args. Add 2 flags and a positional arg to the program that modifies behavior. This is just boilerplate to provide example usage of cxxopts, so it's up to you the args/functionality you add.
 
-For testing, just ensure it builds and runs as expected.
+Ensure the project compiles and the app runs successfully.

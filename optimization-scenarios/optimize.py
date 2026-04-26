@@ -2,16 +2,20 @@
 """
 GEPA prompt optimization harness (direct gepa, no DSPy).
 
-Optimizes the body of `--optimized-prompt` against a static scenario
-(`--static-prompt`, `--agent`) using an LM-as-a-judge rubric
-(`--eval-criteria`). The file's frontmatter is preserved across all writes.
+Optimizes the body of `--agent-system-prompt` against one or more scenarios
+(`--scenario task_prompt_path,workdir`, repeatable) using an LM-as-a-judge
+rubric (`--eval-criteria`). The agent system prompt file's frontmatter is
+preserved across all writes.
+
+All scenarios in a single CLI invocation share the same agent system prompt
+and are optimized together as one batch. They run sequentially (no
+parallelism), since they all read/write the same prompt file.
 
 Flow per candidate:
-  1. write `frontmatter + candidate["prompt"]` to the optimized prompt file
-  2. run opencode in --workdir, capture its output
-  3. judge the output via ollama and return (score, feedback)
-  4. custom proposer reflects on (transcript, score, feedback) and proposes
-     the next candidate, enforcing methodology-only constraints
+  1. write `frontmatter + candidate["prompt"]` to the agent system prompt file
+  2. for each scenario: run opencode in its workdir, capture output
+  3. judge each output via ollama and return (score, feedback) per scenario
+  4. custom proposer reflects on the full batch and proposes the next candidate
 
 Both the judge and the proposer run via ollama (default localhost:11434).
 
@@ -83,11 +87,9 @@ def run_command_live(cmd: list[str]) -> tuple[str, int]:
 
 def run_opencode(
     workdir: Path,
-    static_prompt_path: Path,
-    agent: str,
+    task_prompt: str,
+    subagent: str,
 ) -> str:
-    with open(static_prompt_path, "r") as file:
-        prompt = file.read()
     cwd = os.getcwd()
     os.chdir(workdir)
     try:
@@ -102,8 +104,8 @@ def run_opencode(
             "json",
             "--thinking",
             "--agent",
-            agent,
-            prompt,
+            subagent,
+            task_prompt,
         ]
         output, _ = run_command_live(cmd)
     finally:
@@ -135,24 +137,38 @@ def write_with_frontmatter(path: Path, frontmatter: str, body: str) -> None:
 
 
 # ======================================================================
+# Scenario CLI parsing
+# ======================================================================
+
+
+def parse_scenario(spec: str) -> dict:
+    """
+    Parse a `task_prompt_path,workdir` pair from the CLI.
+    Trims whitespace; both halves required.
+    """
+    parts = [p.strip() for p in spec.split(",")]
+    if len(parts) != 2 or not all(parts):
+        raise argparse.ArgumentTypeError(
+            f"--scenario expects 'task_prompt_path,workdir', got: {spec!r}"
+        )
+    task_prompt_path, workdir = parts
+    if not Path(task_prompt_path).exists():
+        raise argparse.ArgumentTypeError(
+            f"task prompt path does not exist: {task_prompt_path}"
+        )
+    if not Path(workdir).is_dir():
+        raise argparse.ArgumentTypeError(f"workdir is not a directory: {workdir}")
+    return {"task_prompt_path": task_prompt_path, "workdir": workdir}
+
+
+# ======================================================================
 # Judge
 # ======================================================================
 
 
 _JUDGE_SYSTEM_PROMPT = """You are evaluating the output of an AI agent against a rubric.
 
-**Input:**
-    - Evaluation criteria
-    - Json formatted log of the agent's session that is being evaluated
-
-**Output:**
-
-```json
-{
-  "score": <float between 0.0 and 1.0>,
-  "feedback": "<detailed textual rationale citing concrete aspects of the output against specific rubric criteria>"
-}
-```
+Always respond with raw json for the evaluation.
 """
 
 
@@ -160,12 +176,14 @@ def judge(
     client: ollama.Client,
     model: str,
     eval_criteria: str,
+    agent_task: str,
     agent_output: str,
 ) -> tuple[float, str]:
     user_msg = (
         "Evaluate the agent output against the rubric. Respond with JSON only "
         "(keys *must* match: 'score', 'feedback').\n\n"
-        f"**Evaluation criteria:**\n\n{eval_criteria}\n\n"
+        f"**Evaluation criteria:**\n\n```markdown\n{eval_criteria}\n```\n\n"
+        f"**Agent's Task:**\n\n{agent_task}\n\n"
         f"**Agent's session log:**\n\n```json\n{agent_output}\n```\n\n"
     )
     print(f"[judge] calling (output len={len(agent_output)})", file=sys.stderr)
@@ -197,25 +215,25 @@ def judge(
 
 class OpencodeAdapter(GEPAAdapter):
     """
-    Treats the optimized prompt file as the only evolvable component.
+    Treats the agent system prompt file as the only evolvable component.
 
-    candidate schema:  {"prompt": "<body of the optimized prompt file>"}
-    batch element schema:  {"static_prompt_path": str, "agent": str}
+    candidate schema:    {"prompt": "<body of the agent system prompt file>"}
+    batch element schema:  {"task_prompt_path": str, "workdir": str}
     """
 
     def __init__(
         self,
-        workdir: Path,
-        optimized_path: Path,
+        agent_system_prompt_path: Path,
         frontmatter: str,
         eval_criteria: str,
+        subagent: str,
         judge_client: ollama.Client,
         judge_model: str,
     ):
-        self._workdir = workdir
-        self._optimized_path = optimized_path
+        self._agent_system_prompt_path = agent_system_prompt_path
         self._frontmatter = frontmatter
         self._eval_criteria = eval_criteria
+        self._subagent = subagent
         self._judge_client = judge_client
         self._judge_model = judge_model
 
@@ -227,21 +245,31 @@ class OpencodeAdapter(GEPAAdapter):
     ) -> EvaluationBatch:
         body = candidate["prompt"]
         # Persist the candidate to disk before any run — opencode reads it.
-        write_with_frontmatter(self._optimized_path, self._frontmatter, body)
+        write_with_frontmatter(self._agent_system_prompt_path, self._frontmatter, body)
 
         outputs, scores, trajectories = [], [], []
+        # Sequential — all scenarios share the same prompt file on disk.
         for example in batch:
-            static_prompt_path = Path(example["static_prompt_path"])
-            agent = example["agent"]
+            task_prompt_path = Path(example["task_prompt_path"])
+            workdir = Path(example["workdir"])
+
+            print(
+                f"[adapter] scenario: task={task_prompt_path} workdir={workdir}",
+                file=sys.stderr,
+            )
+
+            with open(task_prompt_path, "r") as file:
+                task_prompt = file.read()
 
             transcript = run_opencode(
-                workdir=self._workdir,
-                static_prompt_path=static_prompt_path,
-                agent=agent,
+                workdir=workdir,
+                task_prompt=task_prompt,
+                subagent=self._subagent,
             )
             score, feedback = judge(
                 client=self._judge_client,
                 model=self._judge_model,
+                agent_task=task_prompt,
                 eval_criteria=self._eval_criteria,
                 agent_output=transcript,
             )
@@ -251,8 +279,8 @@ class OpencodeAdapter(GEPAAdapter):
             if capture_traces:
                 trajectories.append(
                     {
-                        "static_prompt_path": str(static_prompt_path),
-                        "agent": agent,
+                        "task_prompt_path": str(task_prompt_path),
+                        "workdir": str(workdir),
                         "candidate_prompt": body,
                         "transcript": transcript,
                         "score": score,
@@ -276,13 +304,13 @@ class OpencodeAdapter(GEPAAdapter):
         for component in components_to_update:
             rows = []
             for traj, score in zip(eval_batch.trajectories or [], eval_batch.scores):
-                with open(traj["static_prompt_path"], "r") as f:
-                    scenario_prompt = f.read()
+                with open(traj["task_prompt_path"], "r") as f:
+                    task_prompt = f.read()
                 rows.append(
                     {
                         "Inputs": {
-                            "scenario_prompt": scenario_prompt,
-                            "agent": traj["agent"],
+                            "task_prompt": task_prompt,
+                            "workdir": traj["workdir"],
                         },
                         "Generated Outputs": traj["transcript"],
                         "Feedback": (
@@ -406,22 +434,23 @@ class OllamaProposer(ProposalFn):
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
-        "--workdir",
-        type=Path,
+        "--scenario",
+        type=parse_scenario,
         required=True,
-        help="Directory in which to launch opencode",
+        action="append",
+        metavar="TASK_PROMPT_PATH,WORKDIR",
+        help=(
+            "A scenario as a comma-separated pair: "
+            "path to the task prompt file, and the workdir to launch opencode in. "
+            "Repeat the flag to add more scenarios; all share the same agent "
+            "system prompt and are optimized together as one batch."
+        ),
     )
     parser.add_argument(
-        "--static-prompt",
+        "--agent-system-prompt",
         type=Path,
         required=True,
-        help="Path to the fixed scenario prompt file",
-    )
-    parser.add_argument(
-        "--optimized-prompt",
-        type=Path,
-        required=True,
-        help="Path to the prompt file being optimized (rewritten in place)",
+        help="Path to the agent system prompt file being optimized (rewritten in place)",
     )
     parser.add_argument(
         "--eval-criteria",
@@ -430,7 +459,10 @@ def main() -> int:
         help="Path to the rubric file used by the judge",
     )
     parser.add_argument(
-        "--agent", type=str, required=True, help="Agent name passed through to opencode"
+        "--subagent",
+        type=str,
+        required=True,
+        help="Subagent name passed through to the opencode CLI (--agent)",
     )
     parser.add_argument(
         "--judge-model",
@@ -460,7 +492,7 @@ def main() -> int:
 
     # --- Load files ---
     eval_criteria = args.eval_criteria.read_text(encoding="utf-8")
-    optimized_text = args.optimized_prompt.read_text(encoding="utf-8")
+    optimized_text = args.agent_system_prompt.read_text(encoding="utf-8")
     frontmatter, initial_body = split_frontmatter(optimized_text)
 
     # --- Ollama client ---
@@ -468,10 +500,10 @@ def main() -> int:
 
     # --- Adapter ---
     adapter = OpencodeAdapter(
-        workdir=args.workdir,
-        optimized_path=args.optimized_prompt,
+        agent_system_prompt_path=args.agent_system_prompt,
         frontmatter=frontmatter,
         eval_criteria=eval_criteria,
+        subagent=args.subagent,
         judge_client=ollama_client,
         judge_model=args.judge_model,
     )
@@ -482,13 +514,17 @@ def main() -> int:
         model=args.reflection_model,
     )
 
-    # --- Trainset (single scenario) ---
-    trainset = [
-        {
-            "static_prompt_path": str(args.static_prompt),
-            "agent": args.agent,
-        }
-    ]
+    # --- Trainset (all scenarios; sequential evaluation per candidate) ---
+    trainset = list(args.scenario)
+    print(
+        f"[harness] {len(trainset)} scenario(s) registered:",
+        file=sys.stderr,
+    )
+    for s in trainset:
+        print(
+            f"  - task={s['task_prompt_path']}  workdir={s['workdir']}",
+            file=sys.stderr,
+        )
 
     # --- Seed candidate ---
     seed_candidate = {"prompt": initial_body}
@@ -498,17 +534,17 @@ def main() -> int:
         seed_candidate=seed_candidate,
         trainset=trainset,
         adapter=adapter,
-        reflection_lm=None,
-        custom_candidate_proposer=proposer,  # <-- was instruction_proposer
+        reflection_lm=None,  # unused when candidate_proposer is provided
+        custom_candidate_proposer=proposer,
         max_metric_calls=args.max_metric_calls,
         display_progress_bar=True,
     )
 
     # --- Persist final best body ---
     best = result.best_candidate["prompt"]
-    write_with_frontmatter(args.optimized_prompt, frontmatter, best)
+    write_with_frontmatter(args.agent_system_prompt, frontmatter, best)
     print(
-        f"[harness] Final optimized prompt written to {args.optimized_prompt}",
+        f"[harness] Final optimized prompt written to {args.agent_system_prompt}",
         file=sys.stderr,
     )
     return 0

@@ -12,9 +12,6 @@ node_modules/
 .opencode/**
 .grepai/
 
-# Optimization scenarios — working project dirs are ephemeral (reset by harness between runs)
-optimization-scenarios/cpp-greenfield-project/
-
 # Harness — Python bytecode and local OpenCode state
 harness/__pycache__/
 harness/*.pyc
