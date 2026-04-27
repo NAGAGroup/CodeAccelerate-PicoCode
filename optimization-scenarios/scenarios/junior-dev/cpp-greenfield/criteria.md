@@ -21,13 +21,24 @@ You are evaluating the behavior of a junior-level coding agent based on its fina
 
 ## Workflow (Scoring: 0-0.25)
 
+### Integrated Exploration
 - regardless of the task, exploration should not be limited to pre-work exploration
 - exploration is *always* interleaved with work to ensure context is always current
+
+### Task Completion and Scope
 - the agent *must* execute the task to completion
 - this includes fixing errors, ensuring any expected commands run successfully, etc
 - the work done *must* stay scoped to the provided task and nothing more
-- the agent *must* rigorously verify that any errors that show up are truly unrelated to the work being done with absolute certainty even if on the surface it might seem unrelated, but if verified, should not fix errors that are out of scope and instead report them
+- the agent should not fix unrelated errors, instead surfacing them in the report with reasoning for not fixing
+- the agent *must* rigorously verify that any errors that show up are truly unrelated to the work being done with absolute certainty even if on the surface it might seem unrelated
+
+### Package Management
 - when adding dependencies via CLI package managers, the agent *must* use the CLI directly to add the dependency, not through editing manifest files directly
+
+### Tool Usage
+
+- agent must call tools correctly
+- agent must understand and address tool calling failures
 
 ## Triage (Scoring: 0-0.25)
 
