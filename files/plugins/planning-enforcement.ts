@@ -1,4 +1,4 @@
-import type { Plugin } from "@opencode-ai/plugin";
+import type { Plugin, PluginInput } from "@opencode-ai/plugin";
 import { ensureOpenCodeIgnore } from "./plugin-utils";
 import type { PluginDeps } from "./modules/deps";
 import { createSessionTools } from "./modules/tools/session-tools";
@@ -12,7 +12,7 @@ import { createSessionHooks } from "./modules/hooks/session-hooks";
 export const PlanningEnforcementPlugin: Plugin = async (_ctx) => {
   const { client } = _ctx;
 
-  const resolveWorktree = (_ctx: { worktree?: string }) => process.cwd();
+  const resolveWorktree = (_ctx: PluginInput) => _ctx.directory;
 
   // Per-turn flag: set by chat.params, consumed by experimental.chat.system.transform.
   let _dagActiveThisTurn = false;
@@ -28,7 +28,9 @@ export const PlanningEnforcementPlugin: Plugin = async (_ctx) => {
     client,
     resolveWorktree,
     dagActiveThisTurn: () => _dagActiveThisTurn,
-    setDagActiveThisTurn: (value) => { _dagActiveThisTurn = value; },
+    setDagActiveThisTurn: (value) => {
+      _dagActiveThisTurn = value;
+    },
     pluginCtx: _ctx,
     pendingPrompts,
   };
@@ -70,6 +72,7 @@ export const PlanningEnforcementPlugin: Plugin = async (_ctx) => {
 
     "chat.params": sessionHooks["chat.params"],
 
-    "experimental.session.compacting": sessionHooks["experimental.session.compacting"],
+    "experimental.session.compacting":
+      sessionHooks["experimental.session.compacting"],
   };
 };

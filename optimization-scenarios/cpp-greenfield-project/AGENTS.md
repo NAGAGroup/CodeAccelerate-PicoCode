@@ -21,5 +21,6 @@ The project being worked on is a C++ greenfield project where dependencies and t
 
 ## CPM.cmake
 
+`CPM.cmake` is a package management tool for `cmake` that wraps `FetchContent`. It is already available in the project's `cmake/CPM.cmake` file and is pre-included in `CMakeLists.txt`, which has example usage in a comment.
+
 - Documentation: https://github.com/cpm-cmake/CPM.cmake/blob/master/README.md
-- Wraps `FetchContent` to make adding external sources much more straightforward

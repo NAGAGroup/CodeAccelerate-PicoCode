@@ -2,14 +2,13 @@
   "$schema": "https://opencode.ai/config.json",
   "autoupdate": false,
   "small_model": "ollama/opencode-model",
-  "plugin": ["file://{env:HOME}/.config/opencode/plugins/planning-enforcement.js"],
   "default_agent": "headwrench",
   "provider": {
     "ollama": {
       "npm": "@ai-sdk/openai-compatible",
       "name": "Ollama (local)",
       "options": {
-        "baseURL": "http://localhost:{env:OPENCODE_OLLAMA_PORT}/v1"
+        "baseURL": "{env:OPENCODE_OLLAMA_URL}/v1"
       },
       "models": {
         "opencode-model": {
@@ -62,7 +61,11 @@
   "mcp": {
     "context7": {
       "type": "local",
-      "command": ["npx", "-y", "@upstash/context7-mcp"],
+      "command": [
+        "npx",
+        "-y",
+        "@upstash/context7-mcp"
+      ],
       "enabled": true
     },
     // Semantic session memory. Stores and retrieves findings by meaning across DAG steps.
@@ -71,7 +74,10 @@
     // Or without Docker: uvx mcp-server-qdrant
     "qdrant": {
       "type": "local",
-      "command": ["uvx", "mcp-server-qdrant"],
+      "command": [
+        "uvx",
+        "mcp-server-qdrant"
+      ],
       "environment": {
         "QDRANT_LOCAL_PATH": ".opencode/qdrant",
         "EMBEDDING_MODEL": "sentence-transformers/all-MiniLM-L6-v2"

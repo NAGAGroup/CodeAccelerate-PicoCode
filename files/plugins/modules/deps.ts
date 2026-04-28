@@ -1,3 +1,5 @@
+import { PluginInput } from "@opencode-ai/plugin";
+
 /**
  * Shared plugin dependencies passed to all modules.
  * Avoids global state by threading context explicitly.
@@ -6,7 +8,7 @@ export interface PluginDeps {
   /** OpenCode API client for session.prompt calls. */
   client: any;
   /** Resolve the worktree path (always process.cwd() in current impl). */
-  resolveWorktree: (ctx: { worktree?: string }) => string;
+  resolveWorktree: (ctx: PluginInput) => string;
   /** Per-turn flag: true if a DAG is active for this session. */
   dagActiveThisTurn: () => boolean;
   /** Set the per-turn DAG active flag. */

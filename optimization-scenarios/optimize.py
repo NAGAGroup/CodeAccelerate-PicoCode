@@ -1,41 +1,73 @@
 #!/usr/bin/env python3
 """
-GEPA prompt optimization harness (dspy.GEPA proper).
+GEPA prompt optimization harness.
 
-Optimizes the body of `--agent-system-prompt` against one or more scenarios
-(`--scenario task_prompt_path,workdir`, repeatable) using an LM-as-a-judge
-rubric (`--eval-criteria`). The agent system prompt file's frontmatter is
-preserved across all writes.
+Optimizes the system prompt body of a named OpenCode agent (`--agent`) against
+one or more scenarios (`--scenario task_prompt_path,workdir`, repeatable) using
+an LM-as-a-judge rubric (`--eval-criteria`).
 
 Architecture:
-  - Student is a dspy.Module with one dspy.Predict whose signature
-    `.instructions` IS the agent system prompt body. GEPA mutates the
-    instructions; forward() persists them to disk so opencode picks them up,
-    runs opencode, and returns the transcript.
-  - The predictor is invoked in forward() so DSPy's trace machinery captures
-    it (required for GEPA's reflective dataset). Its output is discarded —
-    the metric judges the opencode transcript, not the predictor's output.
-  - The metric is an LM-as-a-judge call returning dspy.Prediction(score, feedback).
-  - The instruction proposer is a ProposalFn whose docstring encodes the
-    methodology-only revision rules; the body is a single dspy.ChainOfThought
-    call.
+  - Student is a dspy.Module with one dspy.Predict (TaskSignature) whose
+    `.instructions` GEPA mutates across iterations.
+  - forward() creates an isolated tmpdir per call: copies the workdir and
+    opencode-cfg into it, then runs via the openai-oc-proxy with the tmpdir
+    as the OpenCode working directory. Thread-safe; num_threads > 1 is fine.
+  - The metric is an LM-as-a-judge (JudgeSignature) that scores the agent's
+    full execution transcript against the eval rubric and returns score +
+    feedback. The judge is instructed to cite specific tool names in feedback.
+  - MethodologyProposer enforces that proposed instructions stay domain-agnostic:
+    tool names are allowed, but task/domain specifics (languages, libraries,
+    frameworks, file extensions) are banned. This keeps the optimized prompt
+    general across arbitrary task domains.
+  - The winning .instructions body is written back to
+    opencode-cfg/agents/<agent>.md (frontmatter preserved).
 
-All scenarios in a single CLI invocation share the same agent system prompt
-and are optimized together. They run sequentially since they all touch the
-same file on disk.
-
-Dependencies:  dspy  gepa
+Dependencies: dspy  gepa
 """
 
 import argparse
-import os
 import shutil
-import subprocess
 import sys
+import tempfile
 import traceback
 from pathlib import Path
+from typing import Optional
+
+from tqdm import tqdm as _tqdm
+
+
+def tprint(*args, **kwargs):
+    """tqdm-safe print — won't be overwritten by the GEPA progress bar."""
+    _tqdm.write(" ".join(str(a) for a in args), file=kwargs.get("file", sys.stderr))
+
 
 import dspy
+from dspy.teleprompt.gepa.gepa import DSPyTrace
+
+
+class PassthroughAdapter(dspy.Adapter):
+    """
+    Minimal adapter for OpenCode sessions.
+
+    format() sends exactly two messages:
+      - system: the raw signature instructions (the candidate prompt GEPA optimizes)
+      - user:   the raw task input
+
+    No [[ ## field ## ]] markers, no boilerplate — OpenCode receives a clean prompt.
+
+    parse() returns the entire LM response as the `response` output field verbatim,
+    so the full transcript (thinking, tool calls, tool results, final text) is
+    preserved in pred.response for the judge to evaluate.
+    """
+
+    def format(self, signature, demos, inputs):
+        return [
+            {"role": "system", "content": signature.instructions},
+            {"role": "user", "content": inputs.get("task", "")},
+        ]
+
+    def parse(self, signature, completion):
+        return {"response": completion}
 from gepa.core.adapter import ProposalFn
 
 
@@ -85,196 +117,156 @@ def parse_scenario(spec: str) -> dict:
 
 
 # ======================================================================
-# Opencode black box
+# Student
 # ======================================================================
 
 
-def run_command_live(cmd: list[str]) -> tuple[str, int]:
-    captured = []
-    proc = subprocess.Popen(
-        cmd,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        bufsize=1,
-    )
-    assert proc.stdout is not None
-    for line in proc.stdout:
-        sys.stdout.write(line)
-        sys.stdout.flush()
-        captured.append(line)
-    returncode = proc.wait()
-    return "".join(captured), returncode
+class TaskSignature(dspy.Signature):
+    """Execute the provided task. Respond with a summary of your work."""
 
-
-def run_opencode(workdir: Path, task_prompt: str, subagent: str) -> str:
-    cwd = os.getcwd()
-    tmpdir = Path(f"/tmp/{workdir}")
-    shutil.copytree(workdir, tmpdir)
-    os.chdir(tmpdir)
-    try:
-        subprocess.call(["grepai", "init", "-p", "ollama", "--yes"])
-        cmd = [
-            "npx",
-            "opencode",
-            "run",
-            "--thinking",
-            "--agent",
-            subagent,
-            task_prompt,
-        ]
-        output, _ = run_command_live(cmd)
-    finally:
-        shutil.rmtree(f"/tmp/{workdir}")
-        os.chdir(cwd)
-
-    print("\n\n[forward] Opencode finished.\n\n")
-    return output
-
-
-# ======================================================================
-# Student: dspy.Module wrapping opencode
-# ======================================================================
-
-
-class _AgentSignature(dspy.Signature):
-    """Placeholder — replaced via with_instructions at construction.
-
-    The .instructions on this signature is the agent system prompt body
-    that GEPA optimizes. The predictor is invoked during forward() solely
-    so DSPy's trace machinery captures it; its output is discarded.
-    """
-
-    task: str = dspy.InputField(desc="The task description given to the agent")
-    result: str = dspy.OutputField(desc="What the agent would do for this task")
+    task: str = dspy.InputField()
+    response: str = dspy.OutputField()
 
 
 class OpencodeAgent(dspy.Module):
     """
-    Student module. Holds one dspy.Predict whose signature instructions are
-    the agent system prompt body. forward() persists the current instructions
-    to the agent system prompt file, runs opencode, and returns the transcript.
+    DSPy module wrapping OpenCode via the openai-oc-proxy.
+
+    GEPA optimizes self.execute.signature.instructions. Each forward() call:
+      1. Copies the workdir to a fresh tmpdir (unique per call — thread-safe).
+      2. Copies opencode-cfg into tmpdir/.opencode/ so OpenCode finds the
+         agent config (permissions, tools, frontmatter).
+      3. Creates a dspy.LM pointed at the proxy with the tmpdir passed via
+         extra_body. The candidate instructions flow as the system message;
+         the proxy forwards them as OpenCode's systemPrompt override.
+      4. Calls self.execute(task=...) so GEPA traces the predict call.
+      5. Cleans up tmpdir unconditionally.
     """
 
     def __init__(
         self,
-        initial_body: str,
-        agent_system_prompt_path: Path,
-        frontmatter: str,
-        subagent: str,
+        opencode_cfg: Path,
+        agent_name: str,
+        initial_instructions: str,
+        proxy_url: str,
+        model: str,
     ):
         super().__init__()
-        self.agent = dspy.Predict(_AgentSignature.with_instructions(initial_body))
-        self._agent_system_prompt_path = agent_system_prompt_path
-        self._frontmatter = frontmatter
-        self._subagent = subagent
-
-    def forward(self, task_prompt: str, workdir: str) -> dspy.Prediction:
-        # Whatever GEPA has installed as the current candidate body:
-        body = self.agent.signature.instructions
-
-        # Persist to disk so opencode reads the new prompt.
-        write_with_frontmatter(self._agent_system_prompt_path, self._frontmatter, body)
-
-        print(
-            f"[student] running opencode workdir={workdir}",
-            file=sys.stderr,
+        self.execute = dspy.Predict(
+            TaskSignature.with_instructions(initial_instructions)
         )
-        transcript = run_opencode(
-            workdir=Path(workdir),
-            task_prompt=task_prompt,
-            subagent=self._subagent,
-        )
+        self.opencode_cfg = opencode_cfg
+        self.agent_name = agent_name
+        self.proxy_url = proxy_url.rstrip("/")
+        self.model = model
 
-        # Invoke the predictor so DSPy traces it. Output is irrelevant —
-        # the trace is what GEPA's reflective dataset reads from. Without
-        # this call, GEPA's make_reflective_dataset finds no predictions
-        # and skips the proposal.
+    def forward(self, task: str, workdir: str) -> dspy.Prediction:
+        tmpdir = Path(tempfile.mkdtemp(prefix="oc-opt-"))
         try:
-            _ = self.agent(task=task_prompt)
-        except Exception as e:
-            print(
-                f"[student] trace-predictor call failed (non-fatal): "
-                f"{type(e).__name__}: {e}",
-                file=sys.stderr,
+            shutil.copytree(workdir, tmpdir, dirs_exist_ok=True)
+            shutil.copytree(
+                self.opencode_cfg,
+                tmpdir / ".opencode",
+                ignore=shutil.ignore_patterns(
+                    "node_modules",
+                    "package-lock.json",
+                    "bun.lock",
+                    "*.lock",
+                    ".git",
+                ),
             )
 
-        return dspy.Prediction(transcript=transcript)
+            lm = dspy.LM(
+                model=f"openai/{self.model}",
+                api_base=f"{self.proxy_url}/v1",
+                extra_body={
+                    "opencode": {
+                        "directory": str(tmpdir),
+                        "agent": self.agent_name,
+                    }
+                },
+                api_key="x",
+                timeout=7200,  # 2 hours — agent sessions can be long
+            )
+
+            with dspy.context(lm=lm, adapter=PassthroughAdapter()):
+                pred = self.execute(task=task)
+                tprint(f"\n\n[student]{pred.response}\n\n")
+                return pred
+
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 # ======================================================================
-# Metric: LM-as-a-judge via ollama
+# Metric: LM-as-a-judge
 # ======================================================================
 
 
-class JudgeAgentOutput(dspy.Signature):
-    """Evaluate an AI agent's output against a rubric.
+class JudgeSignature(dspy.Signature):
+    """Evaluate the agent's full execution response against the provided rubric.
 
-    In your feedback, always provide both what the agent did well and where
-    it could improve. Provide a breakdown of your scores with reasoning,
-    citing concrete aspects of the agent's session log against specific
-    rubric criteria.
+    The response includes the agent's reasoning, all tool calls made and their
+    results, and the agent's final response. Score each rubric criterion
+    independently, then sum for the total score.
+
+    When providing feedback, cite specific tool names exactly as they appear
+    in the rubric (e.g. smart_grep_index_status, Bash, Read) when identifying
+    gaps or successes in tool usage. Specific tool names in feedback allow the
+    system to incorporate them into improved instructions.
     """
 
-    eval_criteria: str = dspy.InputField(
-        desc="The rubric defining the evaluation criteria"
-    )
-    agent_task: str = dspy.InputField(desc="The task that was given to the agent")
-    agent_output: str = dspy.InputField(
-        desc="The agent's session log (typically JSON-formatted)"
+    task: str = dspy.InputField(desc="The task that was given to the agent")
+    eval_criteria: str = dspy.InputField(desc="The rubric defining scoring criteria")
+    response: str = dspy.InputField(
+        desc="The agent's full execution response including reasoning, tool calls and results, and final response"
     )
 
     score: float = dspy.OutputField(
-        desc="A score between 0.0 and 1.0 reflecting overall rubric performance"
+        desc="Total score from 0.0 to 1.0, summed from per-criterion scores"
     )
     feedback: str = dspy.OutputField(
         desc=(
-            "Detailed textual rationale: what the agent did well, where it "
-            "could improve, and a per-criterion breakdown of the score"
+            "Per-criterion breakdown: what the agent did well, what it missed, "
+            "and specific tool names where relevant"
         )
     )
 
 
 def make_metric(eval_criteria: str, judge_lm: dspy.LM):
-    judge = dspy.ChainOfThought(JudgeAgentOutput)
+    judge = dspy.ChainOfThought(JudgeSignature)
 
     def metric(
         gold: dspy.Example,
         pred: dspy.Prediction,
-        trace=None,
+        trace: Optional[DSPyTrace] = None,
         pred_name=None,
         pred_trace=None,
     ):
         try:
+            response = pred.response
             with dspy.context(lm=judge_lm):
                 result = judge(
+                    task=gold.task,
                     eval_criteria=eval_criteria,
-                    agent_task=gold.task_prompt,
-                    agent_output=pred.transcript,
+                    response=response,
                 )
             score = float(result.score)
             feedback = str(result.feedback)
-            print(
-                f"[metric] score={score:.3f} feedback_len={len(feedback)}",
-                file=sys.stderr,
-            )
+            tprint(f"\n\n[metric] score={score:.3f} feedback={feedback}\n\n")
             return dspy.Prediction(score=score, feedback=feedback)
         except Exception as e:
-            print(
-                f"[metric] FAILED: {type(e).__name__}: {e}",
-                file=sys.stderr,
-            )
+            tprint(f"[metric] FAILED: {type(e).__name__}: {e}")
             traceback.print_exc(file=sys.stderr)
             return dspy.Prediction(
-                score=0.0,
-                feedback=f"Judge error: {type(e).__name__}: {e}",
+                score=0.0, feedback=f"Judge error: {type(e).__name__}: {e}"
             )
 
     return metric
 
 
 # ======================================================================
-# Instruction proposer: ProposalFn using dspy.ChainOfThought
+# Instruction proposer: enforces methodology-only instructions
 # ======================================================================
 
 
@@ -285,13 +277,23 @@ class ProposeImprovedPrompt(dspy.Signature):
     improved version of the prompt.
 
     Prompt Revision Rules:
-    - Always keep the prompt free of any domain-specific or task-specific language (e.g. programming languages, build systems, specific shell tools, library names, file extensions, framework names, etc. are *banned* from the prompt)
-    - Instead, the prompt should focus on methodology (e.g. tool usage, information gathering, completeness, recovery from failures, reporting discipline, etc.)
-    - Always keep the prompt applicable across arbitrary task domains
+    - Always keep the prompt free of any domain-specific or task-specific
+      language (e.g. programming languages, build systems, specific shell tools,
+      library names, file extensions, framework names, etc. are *banned* from
+      the prompt).
+    - Tool names that are part of the agent's toolset (e.g. smart_grep_index_status,
+      smart_grep_search, Bash, Read, Write, Glob) are *allowed* — they describe
+      methodology, not domain.
+    - Instead, the prompt should focus on methodology (e.g. tool usage, information
+      gathering, completeness, recovery from failures, reporting discipline, etc.).
+    - Always keep the prompt applicable across arbitrary task domains.
     """
 
     current_prompt: str = dspy.InputField(
         desc="The current agent system prompt that needs improvement"
+    )
+    ideal_behavior: str = dspy.InputField(
+        desc="Evaluation rubric that guides ideal agent behavior (for reference only, not scoring)."
     )
     feedback_examples: str = dspy.InputField(
         desc=(
@@ -307,13 +309,14 @@ class ProposeImprovedPrompt(dspy.Signature):
 
 class MethodologyProposer(ProposalFn):
     """
-    Custom instruction proposer. Wraps a dspy.ChainOfThought whose signature
-    docstring encodes the methodology-only revision rules. Runs in the
-    reflection_lm context.
+    Custom instruction proposer that enforces methodology-only revision rules.
+    GEPA already wraps the __call__ in dspy.context(lm=reflection_lm), so no
+    explicit context management is needed here.
     """
 
-    def __init__(self):
+    def __init__(self, eval_criteria: str):
         self._propose = dspy.ChainOfThought(ProposeImprovedPrompt)
+        self._eval_criteria = eval_criteria
 
     def __call__(
         self,
@@ -338,31 +341,21 @@ class MethodologyProposer(ProposalFn):
             )
 
             try:
-                # dspy.GEPA invokes the proposer inside the reflection_lm
-                # context, so no explicit dspy.context(lm=...) needed here.
                 result = self._propose(
                     current_prompt=current,
+                    ideal_behavior=self._eval_criteria,
                     feedback_examples=feedback_block,
                 )
                 improved = result.improved_prompt
                 if isinstance(improved, str) and improved.strip():
                     updated[component] = improved
-                    print(
-                        f"[proposer] proposed new prompt for '{component}' "
-                        f"(len={len(improved)})",
-                        file=sys.stderr,
+                    tprint(
+                        f"[proposer] new prompt for '{component}' (len={len(improved)})"
                     )
                 else:
-                    print(
-                        f"[proposer] empty/invalid improved_prompt for "
-                        f"'{component}'; skipping",
-                        file=sys.stderr,
-                    )
+                    tprint(f"[proposer] empty result for '{component}'; skipping")
             except Exception as e:
-                print(
-                    f"[proposer] FAILED for '{component}': {type(e).__name__}: {e}",
-                    file=sys.stderr,
-                )
+                tprint(f"[proposer] FAILED for '{component}': {type(e).__name__}: {e}")
                 traceback.print_exc(file=sys.stderr)
 
         return updated
@@ -382,92 +375,120 @@ def main() -> int:
         action="append",
         metavar="TASK_PROMPT_PATH,WORKDIR",
         help=(
-            "A scenario as a comma-separated pair: path to the task prompt "
-            "file, and the workdir to launch opencode in. Repeat the flag to "
-            "add more scenarios; all share the same agent system prompt."
+            "A scenario as 'task_prompt_path,workdir'. Repeatable; all scenarios "
+            "share the same agent and are optimized together."
         ),
     )
     parser.add_argument(
-        "--agent-system-prompt",
+        "--opencode-cfg",
         type=Path,
         required=True,
-        help="Path to the agent system prompt file being optimized (rewritten in place)",
+        help=(
+            "Path to the OpenCode config directory (equivalent to .opencode/). "
+            "Copied into each tmpdir as .opencode/ during optimization. "
+            "The winning prompt is written back to <opencode-cfg>/agents/<agent>.md."
+        ),
+    )
+    parser.add_argument(
+        "--agent",
+        type=str,
+        required=True,
+        help="Name of the agent to optimize (must exist as <opencode-cfg>/agents/<agent>.md).",
     )
     parser.add_argument(
         "--eval-criteria",
         type=Path,
         required=True,
-        help="Path to the rubric file used by the judge",
+        help="Path to the rubric file used by the judge LM.",
     )
     parser.add_argument(
-        "--subagent",
+        "--proxy-url",
+        type=str,
+        default="http://localhost:8080",
+        help="Base URL of the openai-oc-proxy (default: http://localhost:8080).",
+    )
+    parser.add_argument(
+        "--model",
         type=str,
         required=True,
-        help="Subagent name passed through to the opencode CLI (--agent)",
+        help="Model ID in providerID/modelID format (e.g. anthropic/claude-sonnet-4-5-20250929).",
     )
     parser.add_argument(
         "--judge-model",
         type=str,
         default="eval-model",
-        help="Ollama model name for the judge",
+        help="LiteLLM model string for the judge LM (default: ollama_chat/eval-model).",
     )
     parser.add_argument(
         "--reflection-model",
         type=str,
         default="eval-model",
-        help="Ollama model name for the reflection LM",
+        help="LiteLLM model string for the GEPA reflection LM (default: ollama_chat/eval-model).",
     )
     parser.add_argument(
         "--ollama-host",
         type=str,
         default="http://localhost:11434",
-        help="Ollama host URL",
+        help="Ollama host URL for judge and reflection LMs (default: http://localhost:11434).",
+    )
+    parser.add_argument(
+        "--num-threads",
+        type=int,
+        default=None,
+        help="Parallel evaluation threads (default: let GEPA decide).",
     )
     parser.add_argument(
         "--auto",
         type=str,
         default="light",
         choices=["light", "medium", "heavy"],
-        help="GEPA auto-budget preset",
+        help="GEPA auto-budget preset (default: light).",
     )
     args = parser.parse_args()
 
-    # --- Load files ---
+    # --- Validate inputs ---
+    opencode_cfg = args.opencode_cfg.resolve()
+    if not opencode_cfg.is_dir():
+        print(f"[error] --opencode-cfg does not exist: {opencode_cfg}", file=sys.stderr)
+        return 1
+
+    agent_file = opencode_cfg / "agents" / f"{args.agent}.md"
+    if not agent_file.exists():
+        print(f"[error] Agent file not found: {agent_file}", file=sys.stderr)
+        return 1
+
     eval_criteria = args.eval_criteria.read_text(encoding="utf-8")
-    optimized_text = args.agent_system_prompt.read_text(encoding="utf-8")
-    frontmatter, initial_body = split_frontmatter(optimized_text)
+
+    # Read frontmatter now — needed only for the final write-back.
+    agent_text = agent_file.read_text(encoding="utf-8")
+    frontmatter, initial_instructions = split_frontmatter(agent_text)
 
     # --- Configure DSPy ---
-    # Task LM: invoked by the student's trace-predictor call. Output is
-    # discarded; we just need a working LM here.
-    task_lm = dspy.LM(
-        f"ollama_chat/{args.judge_model}",
-        api_base=args.ollama_host,
-        max_tokens=8192,
+    # Global default LM (used by GEPA internals when no context is set).
+    dspy.configure(
+        lm=dspy.LM(
+            f"ollama_chat/{args.judge_model}",
+            api_base=args.ollama_host,
+        )
     )
-    dspy.configure(lm=task_lm)
 
-    # Judge LM: scoped via dspy.context inside the metric.
     judge_lm = dspy.LM(
         f"ollama_chat/{args.judge_model}",
         api_base=args.ollama_host,
-        max_tokens=8192,
     )
-
-    # Reflection LM: GEPA invokes the proposer in this context.
     reflection_lm = dspy.LM(
         f"ollama_chat/{args.reflection_model}",
         api_base=args.ollama_host,
         temperature=1.0,
-        max_tokens=32000,
     )
 
     # --- Student ---
     student = OpencodeAgent(
-        initial_body=initial_body,
-        agent_system_prompt_path=args.agent_system_prompt,
-        frontmatter=frontmatter,
-        subagent=args.subagent,
+        opencode_cfg=opencode_cfg,
+        agent_name=args.agent,
+        initial_instructions=initial_instructions,
+        proxy_url=args.proxy_url,
+        model=args.model,
     )
 
     # --- Trainset ---
@@ -475,11 +496,10 @@ def main() -> int:
     print(f"[harness] {len(scenarios)} scenario(s) registered:", file=sys.stderr)
     trainset = []
     for s in scenarios:
-        task_prompt = Path(s["task_prompt_path"]).read_text(encoding="utf-8")
-        ex = dspy.Example(
-            task_prompt=task_prompt,
-            workdir=s["workdir"],
-        ).with_inputs("task_prompt", "workdir")
+        task = Path(s["task_prompt_path"]).read_text(encoding="utf-8")
+        ex = dspy.Example(task=task, workdir=s["workdir"]).with_inputs(
+            "task", "workdir"
+        )
         trainset.append(ex)
         print(
             f"  - task={s['task_prompt_path']}  workdir={s['workdir']}",
@@ -489,29 +509,23 @@ def main() -> int:
     # --- Metric ---
     metric = make_metric(eval_criteria=eval_criteria, judge_lm=judge_lm)
 
-    # --- Proposer ---
-    proposer = MethodologyProposer()
-
     # --- GEPA ---
     optimizer = dspy.GEPA(
         metric=metric,
-        auto=args.auto,
         reflection_lm=reflection_lm,
-        instruction_proposer=proposer,
+        instruction_proposer=MethodologyProposer(eval_criteria=eval_criteria),
+        auto=args.auto,
         track_stats=True,
-        num_threads=1,
+        **({"num_threads": args.num_threads} if args.num_threads is not None else {}),
     )
 
     print("[harness] Running dspy.GEPA optimization...", file=sys.stderr)
     optimized = optimizer.compile(student, trainset=trainset)
 
-    # --- Persist final best body ---
-    final_body = optimized.agent.signature.instructions
-    write_with_frontmatter(args.agent_system_prompt, frontmatter, final_body)
-    print(
-        f"[harness] Final optimized prompt written to {args.agent_system_prompt}",
-        file=sys.stderr,
-    )
+    # --- Write the winning prompt body back to the agent file ---
+    final_body = optimized.execute.signature.instructions
+    write_with_frontmatter(agent_file, frontmatter, final_body)
+    print(f"[harness] Optimized prompt written to {agent_file}", file=sys.stderr)
     return 0
 
 

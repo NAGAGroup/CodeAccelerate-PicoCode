@@ -111226,7 +111226,7 @@ function createSessionHooks(deps) {
 // planning-enforcement.ts
 var PlanningEnforcementPlugin = async (_ctx) => {
   const { client } = _ctx;
-  const resolveWorktree = (_ctx2) => process.cwd();
+  const resolveWorktree = (_ctx2) => _ctx2.directory;
   let _dagActiveThisTurn = false;
   const pendingPrompts = new Map;
   ensureOpenCodeIgnore(resolveWorktree(_ctx));
